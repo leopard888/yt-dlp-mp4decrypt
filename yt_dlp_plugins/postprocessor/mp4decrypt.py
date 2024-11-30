@@ -1,26 +1,27 @@
+import os
+import subprocess
 from os import rename, replace
+from re import sub
+
 from pywidevine.cdm import Cdm
 from pywidevine.device import Device
 from pywidevine.pssh import PSSH
-from re import sub
 from yt_dlp.networking.common import Request
 from yt_dlp.postprocessor import FFmpegMergerPP
 from yt_dlp.postprocessor.common import PostProcessor
 from yt_dlp.utils import Popen, PostProcessingError
-import subprocess
+
 
 class Mp4DecryptPP(PostProcessor):
-    _kwargs = {}
-    _pssh = {}
-    _license_urls = {}
-    _keys = {}
-
     _WVXPATH = './/{*}ContentProtection[@schemeIdUri=\'' + PSSH.SystemId.Widevine.urn + '\']'
 
     def __init__(self, downloader=None, **kwargs):
         PostProcessor.__init__(self, downloader)
         self._sniff_mpds(downloader)
         self._kwargs = kwargs
+        self._pssh = {}
+        self._license_urls = {}
+        self._keys = {}
 
     def _sniff_mpds(self, downloader):
         oldextmethod = downloader.add_info_extractor
@@ -29,11 +30,11 @@ class Mp4DecryptPP(PostProcessor):
             oldmpdmethod = ie._parse_mpd_periods
 
             def newmpdmethod(mpd_doc, *args, **kwargs):
-                if not (element := mpd_doc.find(self._WVXPATH)) == None:
+                if (element := mpd_doc.find(self._WVXPATH)) is not None:
                     mpd_url = kwargs.get('mpd_url') or args[2]
                     self._pssh[mpd_url] = element.findtext('./{*}pssh')
                     self._license_urls[mpd_url] = element.get('{urn:brightcove:2015}licenseAcquisitionUrl')
-                elif not mpd_doc.find('.//{*}ContentProtection') == None:
+                elif mpd_doc.find('.//{*}ContentProtection') is not None:
                     # remove playready, etc.
                     return []
 
@@ -48,9 +49,7 @@ class Mp4DecryptPP(PostProcessor):
         encrypted = []
 
         if 'requested_formats' in info:
-            for part in info['requested_formats']:
-                if self._is_encrypted(part):
-                    encrypted.append(part)
+            encrypted = [p for p in info['requested_formats'] if self._is_encrypted(p)]
         elif info['__real_download'] and self._is_encrypted(info):
             encrypted.append(info)
 
@@ -91,7 +90,7 @@ class Mp4DecryptPP(PostProcessor):
             pssh = self._pssh_from_init(part)
 
         if pssh and license_callback:
-            return self._fetch_keys(info, pssh, license_callback)
+            return self._fetch_keys(pssh, license_callback)
 
         return ()
 
@@ -116,10 +115,12 @@ class Mp4DecryptPP(PostProcessor):
 
         for pssh in find_wv_pssh_offsets(init_data):
             if pssh.system_id == PSSH.SystemId.Widevine:
-                self.to_screen(f'Extracted PSSH from init segment')
+                self.to_screen('Extracted PSSH from init segment')
                 return pssh.dumps()
 
-    def _fetch_keys(self, info, pssh, callback):
+        return None
+
+    def _fetch_keys(self, pssh, callback):
         if keys := self._keys.get(pssh):
             return keys
 
@@ -133,7 +134,7 @@ class Mp4DecryptPP(PostProcessor):
 
             for key in cdm.get_keys(session_id):
                 if key.type == 'CONTENT':
-                    keyarg = '%s:%s' %(key.kid.hex, key.key.hex())
+                    keyarg = f'{key.kid.hex}:{key.key.hex()}'
                     self.to_screen(f'Fetched key: {keyarg}')
                     keys += ('--key', keyarg)
 
@@ -143,12 +144,13 @@ class Mp4DecryptPP(PostProcessor):
     def _decrypt_part(self, keys, filepath):
         originalpath = filepath
 
-        # mp4decrypt on Windows cannot handle certain filenames
-        filepath = sub(r'[^0-9A-z_\-.]+', '', filepath)
-        rename(originalpath, filepath)
+        if os.name == 'nt':
+            # mp4decrypt on Windows cannot handle certain filenames
+            filepath = sub(r'[^0-9A-z_\-.]+', '', filepath)
+            rename(originalpath, filepath)
 
         tmppath = '_decrypted_' + filepath
-        cmd = ('mp4decrypt',) + keys + (filepath, tmppath)
+        cmd = ('mp4decrypt', *keys, filepath, tmppath)
 
         _, stderr, returncode = Popen.run(
             cmd, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, stdin=subprocess.PIPE)
@@ -156,7 +158,8 @@ class Mp4DecryptPP(PostProcessor):
         if returncode != 0:
             raise PostProcessingError(stderr)
 
-        rename(filepath, originalpath)
-        filepath = originalpath
+        if filepath != originalpath:
+            rename(filepath, originalpath)
+            filepath = originalpath
 
         replace(tmppath, filepath)
