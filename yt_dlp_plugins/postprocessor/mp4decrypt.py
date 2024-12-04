@@ -65,7 +65,7 @@ class Mp4DecryptPP(PostProcessor):
 
             if decrypted and '+' in info['format_id']:
                 info['__files_to_merge'] = [part['filepath'] for part in info['requested_formats']]
-                info = self._downloader.run_pp(FFmpegMergerPP(), info)
+                info = self._downloader.run_pp(FFmpegMergerPP(self._downloader), info)
 
         return [], info
 
