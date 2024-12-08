@@ -1,6 +1,6 @@
 [project]
 name = "yt-dlp-mp4decrypt"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
   "pywidevine>=1.8.0",
   "yt-dlp>=2023.01.02"

@@ -26,6 +26,11 @@ When requesting merging of multiple formats, a warning will appear saying the fo
 
 Sites supported by `yt-dlp` where unplayable formats are returned and the license URL is provided in the MPD (e.g. Brightcove) will work out of the box with this plugin. Extractors which give the `This video is DRM protected` error even with `--allow-unplayable-formats` won't work.
 
+### Additional supported sites
+
+ - STV
+ - U
+
 ## Extending support
 
 Add support for a site by writing your own [plugin](https://github.com/yt-dlp/yt-dlp#plugins). The following extra fields are supported in the info dict:
