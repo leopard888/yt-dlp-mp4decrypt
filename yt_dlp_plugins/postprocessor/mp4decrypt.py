@@ -21,6 +21,20 @@ class Mp4DecryptPP(PostProcessor):
         self._license_urls = {}
         self._keys = {}
 
+        class _KeyFetcher(PostProcessor):
+            def run(_self, info):
+                for part in info.get('requested_formats', []):
+                    _self._get_keys(info, part)
+
+                _self._get_keys(info, info)
+                return [], info
+
+            def _get_keys(_self, info, part):
+                if part.get('has_drm') and part['protocol'] == 'http_dash_segments':
+                    self._get_keys(info, part)
+
+        downloader.add_post_processor(_KeyFetcher(downloader), when='before_dl')
+
     def _sniff_mpds(self, downloader):
         oldextmethod = downloader.add_info_extractor
 
@@ -54,7 +68,7 @@ class Mp4DecryptPP(PostProcessor):
 
         if 'requested_formats' in info:
             encrypted = [p for p in info['requested_formats'] if self._is_encrypted(p)]
-        elif info['__real_download'] and self._is_encrypted(info):
+        elif info.get('__real_download') and self._is_encrypted(info):
             encrypted.append(info)
 
         if encrypted:
@@ -82,6 +96,11 @@ class Mp4DecryptPP(PostProcessor):
 
         mpd_url = part['manifest_url']
         pssh = self._pssh.get(mpd_url)
+
+        if not pssh:
+            pssh = self._pssh_from_init(part)
+            self._pssh[mpd_url] = pssh
+
         license_callback = info.get('_license_callback')
         license_url = info.get('_license_url', self._license_urls.get(mpd_url))
 
@@ -89,9 +108,6 @@ class Mp4DecryptPP(PostProcessor):
             def license_callback(challenge):
                 self.to_screen(f'Fetching keys from {license_url}')
                 return self._downloader.urlopen(Request(license_url, data=challenge)).read()
-
-        if not pssh:
-            pssh = self._pssh_from_init(part)
 
         if pssh and license_callback:
             return self._fetch_keys(pssh, license_callback)
