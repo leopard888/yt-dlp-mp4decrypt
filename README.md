@@ -28,7 +28,9 @@ Sites supported by `yt-dlp` where unplayable formats are returned and the licens
 
 ### Additional supported sites
 
+ - Channel 4
  - STV
+ - SonyLIV
  - TVNZ
  - U
  - ViuTV

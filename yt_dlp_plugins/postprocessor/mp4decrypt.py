@@ -13,8 +13,6 @@ from yt_dlp.utils import Popen, PostProcessingError
 
 
 class Mp4DecryptPP(PostProcessor):
-    _WVXPATH = './/{*}ContentProtection[@schemeIdUri=\'' + PSSH.SystemId.Widevine.urn + '\']'
-
     def __init__(self, downloader=None, **kwargs):
         PostProcessor.__init__(self, downloader)
         self._sniff_mpds(downloader)
@@ -30,11 +28,17 @@ class Mp4DecryptPP(PostProcessor):
             oldmpdmethod = ie._parse_mpd_periods
 
             def newmpdmethod(mpd_doc, *args, **kwargs):
-                if (element := mpd_doc.find(self._WVXPATH)) is not None:
-                    mpd_url = kwargs.get('mpd_url') or args[2]
-                    self._pssh[mpd_url] = element.findtext('./{*}pssh')
-                    self._license_urls[mpd_url] = element.get('{urn:brightcove:2015}licenseAcquisitionUrl')
-                elif mpd_doc.find('.//{*}ContentProtection') is not None:
+                elements = mpd_doc.findall('.//{*}ContentProtection')
+                found = False
+
+                for element in elements:
+                    if element.get('schemeIdUri').lower() == PSSH.SystemId.Widevine.urn:
+                        mpd_url = kwargs.get('mpd_url') or args[2]
+                        self._pssh[mpd_url] = element.findtext('./{*}pssh')
+                        self._license_urls[mpd_url] = element.get('{urn:brightcove:2015}licenseAcquisitionUrl')
+                        found = True
+
+                if elements and not found:
                     # remove playready, etc.
                     return []
 

@@ -36,20 +36,26 @@ class ViuTVIE(InfoExtractor):
             'entries': get_entries(),
         }
 
-    def _get_episode(self, episode):
+    def _get_formats(self, product_id):
         vod = self._download_json(
-            'https://api.viu.now.com/p8/3/getVodURL', episode['productId'],
+            'https://api.viu.now.com/p8/3/getVodURL', product_id,
             data=json.dumps({
-                'contentId': episode['productId'],
+                'contentId': product_id,
                 'contentType': 'Vod',
                 'deviceType': 'ANDROID_WEB',
             }).encode(),
         )
 
+        if vod['responseCode'] == 'GEO_CHECK_FAIL':
+            self.raise_geo_restricted()
+
         if '.m3u8' in vod['asset'][0]:
-            formats, subtitles = self._extract_m3u8_formats_and_subtitles(vod['asset'][0], episode['productId'])
-        else:
-            formats, subtitles = self._extract_mpd_formats_and_subtitles(vod['asset'][0], episode['productId'])
+            return self._extract_m3u8_formats_and_subtitles(vod['asset'][0], product_id)
+
+        return self._extract_mpd_formats_and_subtitles(vod['asset'][0], product_id)
+
+    def _get_episode(self, episode):
+        formats, subtitles = self._get_formats(episode['productId'])
 
         return {
             'id': episode['productId'],
