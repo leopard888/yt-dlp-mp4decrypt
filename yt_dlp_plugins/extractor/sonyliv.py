@@ -13,12 +13,12 @@ class SonyLIVDRMIE(SonyLIVIE):
             url = url.replace('/AGL/1.5/', '/AGL/3.8/').replace('/IN/CONTENT/', '/IN/DL/CONTENT/')
             kwargs['headers']['content-type'] = 'application/json'
             kwargs['data'] = json.dumps({
+                'deviceId': self._get_device_id(),
+                'hasLAURLEnabled': True,
+                'platform': 'web',
                 'actionType': 'play',
                 'browser': 'Chrome',
-                'deviceId': self._get_device_id(),
                 'os': 'Windows',
-                'platform': 'web',
-                'hasLAURLEnabled': True,
             }).encode()
 
         response = super()._download_json(url, video_id, *args, **kwargs)
@@ -31,7 +31,7 @@ class SonyLIVDRMIE(SonyLIVIE):
     def _real_extract(self, url):
         info_dict = super()._real_extract(url)
 
-        if info_dict['id'] in self._license_info:
-            info_dict['_license_url'] = self._license_info[info_dict['id']].get('laURL')
+        if (details := self._license_info.get(info_dict['id'])):
+            info_dict['_license_url'] = details.get('laURL')
 
         return info_dict

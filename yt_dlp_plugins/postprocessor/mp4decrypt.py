@@ -1,5 +1,5 @@
-import os
 import subprocess
+from os import name as os_name
 from os import rename, replace
 from re import sub
 
@@ -95,11 +95,17 @@ class Mp4DecryptPP(PostProcessor):
             return ('--key', key)
 
         mpd_url = part['manifest_url']
-        pssh = self._pssh.get(mpd_url)
+
+        if mpd_url in self._pssh:
+            pssh = self._pssh[mpd_url]
+        else:
+            pssh = self._pssh[mpd_url] = self._pssh_from_init(part)
 
         if not pssh:
-            pssh = self._pssh_from_init(part)
-            self._pssh[mpd_url] = pssh
+            return ()
+
+        if keys := self._keys.get(pssh):
+            return keys
 
         license_callback = info.get('_license_callback')
         license_url = info.get('_license_url', self._license_urls.get(mpd_url))
@@ -109,7 +115,7 @@ class Mp4DecryptPP(PostProcessor):
                 self.to_screen(f'Fetching keys from {license_url}')
                 return self._downloader.urlopen(Request(license_url, data=challenge)).read()
 
-        if pssh and license_callback:
+        if license_callback:
             return self._fetch_keys(pssh, license_callback)
 
         return ()
@@ -127,7 +133,7 @@ class Mp4DecryptPP(PostProcessor):
                 pssh_offset = offset - 4
                 size = int.from_bytes(raw[pssh_offset:offset], byteorder='big')
                 offset += size
-                yield PSSH(raw[pssh_offset:pssh_offset + size])
+                yield PSSH(raw[pssh_offset : pssh_offset + size])
 
         init_data = self._downloader.urlopen(Request(
             part['fragment_base_url'] + part['fragments'][0]['path'],
@@ -138,12 +144,10 @@ class Mp4DecryptPP(PostProcessor):
                 self.to_screen('Extracted PSSH from init segment')
                 return pssh.dumps()
 
+        self.report_warning('Could not find PSSH for ' + part['format_id'])
         return None
 
     def _fetch_keys(self, pssh, callback):
-        if keys := self._keys.get(pssh):
-            return keys
-
         keys = ()
 
         if devicepath := self._kwargs.get('devicepath'):
@@ -164,7 +168,7 @@ class Mp4DecryptPP(PostProcessor):
     def _decrypt_part(self, keys, filepath):
         originalpath = filepath
 
-        if os.name == 'nt':
+        if os_name == 'nt':
             # mp4decrypt on Windows cannot handle certain filenames
             filepath = sub(r'[^0-9A-z_\-.]+', '', filepath)
             rename(originalpath, filepath)

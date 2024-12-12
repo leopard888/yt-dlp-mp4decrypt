@@ -28,11 +28,13 @@ class ViuTVIE(InfoExtractor):
         return {
             '_type': 'playlist',
             'id': programme_slug,
-            'title': programme_data['title'],
-            'description': programme_data['synopsis'],
-            'cast': traverse_obj(programme_data, ('programmeMeta', 'actors', ..., 'name')),
-            'genres': traverse_obj(programme_data, ('genres', ..., 'name')),
-            'thumbnail': programme_data['avatar'],
+            **traverse_obj(programme_data, {
+                'title': ('title'),
+                'description': ('synopsis'),
+                'cast': ('programmeMeta', 'actors', ..., 'name'),
+                'genres': ('genres', ..., 'name'),
+                'thumbnail': ('avatar'),
+            }),
             'entries': get_entries(),
         }
 
@@ -58,17 +60,19 @@ class ViuTVIE(InfoExtractor):
         formats, subtitles = self._get_formats(episode['productId'])
 
         return {
-            'id': episode['productId'],
-            'title': episode['episodeNameU3'],
+            **traverse_obj(episode, {
+                'id': ('productId'),
+                'title': ('episodeNameU3'),
+                'thumbnail': ('avatar'),
+                'description': ('program_synopsis'),
+                'cast': ('videoMeta', 'actors', ..., 'name'),
+                'genres': ('programmeMeta', 'genre', ..., 'name'),
+                'duration': ('totalDurationSec'),
+                'series': ('program_title'),
+                'episode': ('episodeNameU3'),
+                'episode_number': ('episodeNum'),
+            }),
             'formats': formats,
             'subtitles': subtitles,
-            'thumbnail': episode['avatar'],
-            'description': episode['program_synopsis'],
-            'cast': traverse_obj(episode, ('videoMeta', 'actors', ..., 'name')),
-            'genres': traverse_obj(episode, ('programmeMeta', 'genre', ..., 'name')),
-            'duration': episode['totalDurationSec'],
-            'series': episode['program_title'],
-            'episode': episode['episodeNameU3'],
-            'episode_number': episode['episodeNum'],
             '_cenc_key': '91ba752a446148c68400d78374b178b4:a01d7dc4edf582496b7e73d67e9e6899',
         }
