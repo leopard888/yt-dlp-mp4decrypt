@@ -30,7 +30,7 @@ class Mp4DecryptPP(PostProcessor):
                 return [], info
 
             def _get_keys(_self, info, part):
-                if part.get('has_drm') and part['protocol'] == 'http_dash_segments':
+                if part.get('has_drm') and self._is_mpd(part):
                     self._get_keys(info, part)
 
         downloader.add_post_processor(_KeyFetcher(downloader), when='before_dl')
@@ -78,7 +78,7 @@ class Mp4DecryptPP(PostProcessor):
             decrypted = True
 
             for part in encrypted:
-                if part['protocol'] == 'http_dash_segments' and (keys := self._get_keys(info, part)):
+                if self._is_mpd(part) and (keys := self._get_keys(info, part)):
                     self._decrypt_part(keys, part['filepath'])
                 else:
                     self.to_screen('Cannot decrypt ' + part['format_id'])
@@ -92,6 +92,9 @@ class Mp4DecryptPP(PostProcessor):
 
     def _is_encrypted(self, info):
         return 'filepath' in info and info.get('has_drm')
+
+    def _is_mpd(self, info):
+        return info['container'] in ('mp4_dash', 'm4a_dash')
 
     def _get_keys(self, info, part):
         if key := info.get('_cenc_key'):
@@ -114,6 +117,7 @@ class Mp4DecryptPP(PostProcessor):
         license_url = info.get('_license_url', self._license_urls.get(mpd_url))
 
         if not license_callback and license_url:
+
             def license_callback(challenge):
                 self.to_screen(f'Fetching keys from {license_url}')
                 return self._downloader.urlopen(Request(license_url, data=challenge,

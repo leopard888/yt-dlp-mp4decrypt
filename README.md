@@ -2,8 +2,8 @@ This [yt-dlp](https://github.com/yt-dlp/yt-dlp) plugin integrates `mp4decrypt` a
 
 ## Prerequisites
 
-* The `mp4decrypt` executable (part of [Bento4](https://www.bento4.com/)) in your system's PATH
-* A CDM in .wvd format
+- The `mp4decrypt` executable (part of [Bento4](https://www.bento4.com/)) in your system's PATH
+- A CDM in .wvd format
 
 ## Installation
 
@@ -25,6 +25,13 @@ When requesting merging of multiple formats, a warning will appear saying the fo
 ## Supported extractors
 
 Sites supported by `yt-dlp` where unplayable formats are returned and the license URL is provided in the MPD (e.g. Brightcove) will work out of the box with this plugin. Extractors which give the `This video is DRM protected` error even with `--allow-unplayable-formats` won't work.
+
+## Format selection
+
+With more video formats available, selecting the right ones becomes important. Specifically, this involves avoiding the `m3u8` formats with FairPlay protection. Apart from using `-f -` to manually pick the formats, the following filters can be helpful:
+
+- `bestvideo*[has_drm=0]+bestaudio[has_drm=0]/best[has_drm=0]`: one of the default selectors updated to only include unprotected formats
+- `bestvideo[container=mp4_dash]+bestaudio[container=m4a_dash]`: choose only the MPEG-DASH formats
 
 ## Extending support
 

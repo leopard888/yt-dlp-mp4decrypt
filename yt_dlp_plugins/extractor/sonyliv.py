@@ -31,7 +31,7 @@ class SonyLIVDRMIE(SonyLIVIE):
     def _real_extract(self, url):
         info_dict = super()._real_extract(url)
 
-        if (details := self._license_info.get(info_dict['id'])):
+        if details := self._license_info.get(info_dict['id']):
             info_dict['_license_url'] = details.get('laURL')
 
         return info_dict

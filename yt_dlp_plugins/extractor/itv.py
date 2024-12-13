@@ -19,6 +19,7 @@ class ITVXIE(InfoExtractor):
             return self._get_episode(props['episode'], video_id)
 
         if programme := props.get('programme'):
+
             def get_entries():
                 for series in props['seriesList']:
                     for episode in series['titles']:
