@@ -48,7 +48,10 @@ class Mp4DecryptPP(PostProcessor):
                 for element in elements:
                     if element.get('schemeIdUri').lower() == PSSH.SystemId.Widevine.urn:
                         mpd_url = kwargs.get('mpd_url') or args[2]
-                        self._pssh[mpd_url] = element.findtext('./{*}pssh')
+
+                        if pssh := element.findtext('./{*}pssh'):
+                            self._pssh[mpd_url] = pssh
+
                         self._license_urls[mpd_url] = element.get('{urn:brightcove:2015}licenseAcquisitionUrl')
                         found = True
 
