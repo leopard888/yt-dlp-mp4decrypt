@@ -1,7 +1,7 @@
 from os import path
 
-import requests
 from yt_dlp.extractor.common import InfoExtractor
+from yt_dlp.networking._requests import RequestsRH
 from yt_dlp.utils import (
     int_or_none,
     traverse_obj,
@@ -9,19 +9,45 @@ from yt_dlp.utils import (
 
 
 class Channel5IE(InfoExtractor):
-    _VALID_URL = r'https://www\.channel5\.com/show/(?P<show>[a-z0-9\-]+)/(?P<season>[a-z0-9\-]+)/(?P<id>[a-z0-9\-]+)'
+    _VALID_URL = r'https://www\.channel5\.com/(?:show/)?(?P<show>[a-z0-9\-]+)/(?P<season>[a-z0-9\-]+)(?:/(?P<id>[a-z0-9\-]+))?'
     _GEO_COUNTRIES = ['GB']
     _GUIDANCE = {
         'Guidance': 16,
         'GuidancePlus': 18,
     }
 
+    def set_downloader(self, downloader):
+        super().set_downloader(downloader)
+
+        if downloader:
+            self._add_handler(downloader._request_director)
+
     def _real_extract(self, url):
         show, season, episode = self._match_valid_url(url).group('show', 'season', 'id')
+
+        if not episode:
+            season_data = self._download_json(
+                f'https://corona.channel5.com/shows/{show}/seasons/{season}/episodes.json?platform=my5desktop',
+                episode)
+
+            def get_entries():
+                for episode in season_data['episodes']:
+                    yield self._get_episode(episode)
+
+            return {
+                '_type': 'playlist',
+                'id': season,
+                'title': traverse_obj(season_data, ('episodes', 0, 'sh_title')),
+                'entries': get_entries(),
+            }
+
         data = self._download_json(
             f'https://corona.channel5.com/shows/{show}/seasons/{season}/episodes/{episode}.json?platform=my5desktop',
             episode)
 
+        return self._get_episode(data)
+
+    def _get_episode(self, data):
         info_dict = {
             **traverse_obj(data, {
                 'id': 'id',
@@ -35,12 +61,9 @@ class Channel5IE(InfoExtractor):
             'age_limit': self._GUIDANCE.get(data['rat']),
         }
 
-        script_dir = path.dirname(__file__)
-        media = requests.get(
+        media = self._download_json(
             'https://cassie-auth.channel5.com/api/v2/media/my5firetv/%s.json' % data['id'],
-            headers={'X-Forwarded-For': self._x_forwarded_for_ip},
-            cert=(path.join(script_dir, 'c5.cert'), path.join(script_dir, 'c5.key')),
-        ).json()
+            data['id'])
 
         if asset := traverse_obj(media, ('assets', 0)):
             formats = []
@@ -61,3 +84,17 @@ class Channel5IE(InfoExtractor):
                     '_license_url': 'keyserver',
                 }),
             }
+
+    def _add_handler(self, director):
+        class Channel5RH(RequestsRH):
+            def _make_sslcontext(self, *args, **kwargs):
+                context = super()._make_sslcontext(*args, **kwargs)
+                context.set_ciphers('ALL:@SECLEVEL=0')
+                context.load_cert_chain(certfile=path.join(path.dirname(__file__), 'c5.pem'))
+
+                return context
+
+        handler = Channel5RH(ie=self, logger=None)
+        director.add_handler(handler)
+        director.preferences.add(lambda rh, req:
+            500 if rh == handler and req.url.startswith('https://cassie-auth.channel5.com/') else 0)

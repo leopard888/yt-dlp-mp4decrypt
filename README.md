@@ -28,9 +28,9 @@ Sites supported by `yt-dlp` where unplayable formats are returned and the licens
 
 ## Format selection
 
-With more video formats available, selecting the right ones becomes important. Specifically, this involves avoiding the `m3u8` formats with FairPlay protection. Apart from using `-f -` to manually pick the formats, the following filters can be helpful:
+With more video formats available, selecting the right ones becomes important. Specifically, this involves avoiding the `m3u8` formats with FairPlay protection. Apart from using `-f -` to manually pick the right formats, the following filters can be helpful:
 
-- `bestvideo*[has_drm=0]+bestaudio[has_drm=0]/best[has_drm=0]`: one of the default selectors updated to only include unprotected formats
+- `bestvideo*[has_drm=0]+bestaudio[has_drm=0]/best[has_drm=0]`: one of the default selectors modified to only include unprotected formats
 - `bestvideo[container=mp4_dash]+bestaudio[container=m4a_dash]`: choose only the MPEG-DASH formats
 
 ## Extending support
