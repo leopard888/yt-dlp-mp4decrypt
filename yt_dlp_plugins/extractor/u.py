@@ -1,5 +1,8 @@
 from yt_dlp.extractor.common import InfoExtractor
-from yt_dlp.utils import int_or_none
+from yt_dlp.utils import (
+    int_or_none,
+    traverse_obj,
+)
 
 
 class UIE(InfoExtractor):
@@ -17,22 +20,24 @@ class UIE(InfoExtractor):
             video_id)
         episode = info['landing_episode']
         title = episode['name'] if not episode['hide_episode_title'] \
-            else 'S%s E%d' %(episode['series_number'], episode['episode_number'])
+            else 'S%s E%d' % (episode['series_number'], episode['episode_number'])
 
         return {
             '_type': 'url_transparent',
             'id': video_id,
             'title': episode['brand_name'] + ' - ' + title,
             'url': self.BRIGHTCOVE_URL_TEMPLATE % episode['video_id'],
-            'thumbnail': episode['image'],
-            'description': episode['synopsis'],
-            'duration': episode['content_duration'],
-            'series': episode['brand_name'],
-            'series_id': episode['brand_id'],
-            'season_number': int_or_none(episode['series_number']),
-            'season_id': episode['series_id'],
+            **traverse_obj(episode, {
+                'thumbnail': 'image',
+                'description': 'synopsis',
+                'duration': 'content_duration',
+                'series': 'brand_name',
+                'series_id': 'brand_id',
+                'season_number': ('series_number', {int_or_none}),
+                'season_id': 'series_id',
+                'episode_number': ('episode_number', {int_or_none}),
+                'episode_id': 'id',
+            }),
             'episode': episode['name'] if episode['hide_episode_title'] else None,
-            'episode_number': episode['episode_number'],
-            'episode_id': episode['id'],
             'ie_key': 'BrightcoveNew',
         }

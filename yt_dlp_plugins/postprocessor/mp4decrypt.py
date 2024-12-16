@@ -75,6 +75,7 @@ class Mp4DecryptPP(PostProcessor):
             encrypted.append(info)
 
         if encrypted:
+            self.to_screen('Decrypting format(s)')
             decrypted = True
 
             for part in encrypted:
@@ -121,7 +122,7 @@ class Mp4DecryptPP(PostProcessor):
             def license_callback(challenge):
                 self.to_screen(f'Fetching keys from {license_url}')
                 return self._downloader.urlopen(Request(license_url, data=challenge,
-                    headers={'Content-Type': 'application/octet-stream'})).read()
+                                                        headers={'Content-Type': 'application/octet-stream'})).read()
 
         if license_callback:
             return self._fetch_keys(pssh, license_callback)
@@ -141,7 +142,7 @@ class Mp4DecryptPP(PostProcessor):
                 pssh_offset = offset - 4
                 size = int.from_bytes(raw[pssh_offset:offset], byteorder='big')
                 offset += size
-                yield PSSH(raw[pssh_offset : pssh_offset + size])
+                yield PSSH(raw[pssh_offset: pssh_offset + size])
 
         init_data = self._downloader.urlopen(Request(
             part['fragment_base_url'] + part['fragments'][0]['path'],

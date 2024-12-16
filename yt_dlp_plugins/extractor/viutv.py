@@ -16,8 +16,9 @@ class ViuTVIE(InfoExtractor):
             f'https://api.viu.tv/production/programmes/{programme_slug}', programme_slug)['programme']
 
         if video_slug:
-            if episode := next(ep for ep in programme_data['episodes'] if ep['slug'] == video_slug):
-                return self._get_episode(episode)
+            for vtype in ('episodes', 'clips'):
+                if episode := next((ep for ep in programme_data[vtype] if ep['slug'] == video_slug), None):
+                    return self._get_episode(episode)
 
             raise ExtractorError('Content not found')
 
@@ -29,11 +30,11 @@ class ViuTVIE(InfoExtractor):
             '_type': 'playlist',
             'id': programme_slug,
             **traverse_obj(programme_data, {
-                'title': ('title'),
-                'description': ('synopsis'),
+                'title': 'title',
+                'description': 'synopsis',
                 'cast': ('programmeMeta', 'actors', ..., 'name'),
                 'genres': ('genres', ..., 'name'),
-                'thumbnail': ('avatar'),
+                'thumbnail': 'avatar',
             }),
             'entries': get_entries(),
         }
@@ -61,16 +62,16 @@ class ViuTVIE(InfoExtractor):
 
         return {
             **traverse_obj(episode, {
-                'id': ('productId'),
-                'title': ('episodeNameU3'),
-                'thumbnail': ('avatar'),
-                'description': ('program_synopsis'),
+                'id': 'productId',
+                'title': 'episodeNameU3',
+                'thumbnail': 'avatar',
+                'description': 'program_synopsis',
                 'cast': ('videoMeta', 'actors', ..., 'name'),
                 'genres': ('programmeMeta', 'genre', ..., 'name'),
-                'duration': ('totalDurationSec'),
-                'series': ('program_title'),
-                'episode': ('episodeNameU3'),
-                'episode_number': ('episodeNum'),
+                'duration': 'totalDurationSec',
+                'series': 'program_title',
+                'episode': 'episodeNameU3',
+                'episode_number': 'episodeNum',
             }),
             'formats': formats,
             'subtitles': subtitles,

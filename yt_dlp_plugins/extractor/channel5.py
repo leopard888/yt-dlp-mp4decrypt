@@ -1,4 +1,4 @@
-from os import path
+import os
 
 from yt_dlp.extractor.common import InfoExtractor
 from yt_dlp.networking._requests import RequestsRH
@@ -90,11 +90,12 @@ class Channel5IE(InfoExtractor):
             def _make_sslcontext(self, *args, **kwargs):
                 context = super()._make_sslcontext(*args, **kwargs)
                 context.set_ciphers('ALL:@SECLEVEL=0')
-                context.load_cert_chain(certfile=path.join(path.dirname(__file__), 'c5.pem'))
+                context.load_cert_chain(certfile=os.path.join(os.path.dirname(__file__), 'c5.pem'))
 
                 return context
 
         handler = Channel5RH(ie=self, logger=None)
         director.add_handler(handler)
-        director.preferences.add(lambda rh, req:
+        director.preferences.add(
+            lambda rh, req:
             500 if rh == handler and req.url.startswith('https://cassie-auth.channel5.com/') else 0)

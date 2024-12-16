@@ -44,7 +44,7 @@ class TVNZIE(InfoExtractor):
                     'thumbnails': ('images', ..., {'url': ('src')}),
                     'series': ('title'),
                     'episode': ('phase'),
-                })
+                }),
             }
 
         if video['type'] == 'newsVideo':
@@ -57,5 +57,5 @@ class TVNZIE(InfoExtractor):
                     'title': ('title'),
                     'description': ('description'),
                     'thumbnails': ('images', ..., {'url': ('src')}),
-                })
+                }),
             }

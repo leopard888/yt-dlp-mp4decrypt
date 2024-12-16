@@ -33,14 +33,14 @@ class Channel4IE(InfoExtractor):
                 b'\x6f\x64\x7a\x63\x55\x33\x57\x64\x55\x69\x58\x4c\x75\x63\x56\x64',
             ).decode('ascii').split('|')
 
-            resp = self._download_json(license_url, video_id,
+            resp = self._download_json(
+                license_url, video_id,
                 data=json.dumps({
                     'token': token,
                     'video': {'type': 'ondemand', 'url': dashwv_stream['uri']},
                     'message': base64.b64encode(challenge).decode(),
                 }).encode(),
-                headers={'Content-Type': 'application/json'},
-            )
+                headers={'Content-Type': 'application/json'})
 
             return base64.b64decode(resp['license'])
 

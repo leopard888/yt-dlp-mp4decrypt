@@ -8,7 +8,7 @@ from yt_dlp.utils import (
 class MytvSuperIE(InfoExtractor):
     _VALID_URL = r'https://www\.mytvsuper\.com/(?:(?P<lang>tc|en)/)?programme/.*/e/(?P<id>\d+)/'
     _GEO_COUNTRIES = ['HK']
-    _TOKEN = 'eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.eyJib3NzX2lkIjoiMDAwMDAwMDAxIiwiZGV2aWNlX3Rva2VuIjoiQ3ZmTUNzVTh4UGlpYmtDUUVrSzM5NUpnIiwiZGV2aWNlX2lkIjoiMCIsImRldmljZV90eXBlIjoid2ViIiwiZGV2aWNlX29zIjoiYnJvd3NlciIsImRybV9pZCI6bnVsbCwiZXh0cmEiOnsicHJvZmlsZV9pZCI6MX0sImlhdCI6MTY0NjI5MzQxNCwiZXhwIjoxNjQ2Mjk3MDE0fQ.t5qYMiV4RJkAZ9FfmmJtigpzNca0P5ZnI4AEXU61HWVIJd5cIUQlNufOJbN4R3MPJxs7msOVBdosIMaIhF49so_ubufqSNDDK9s3qZRpAUaHvRtiXQWCuuL3Am07IwaR6vO-yNFpNtnhTWp7V-5KkmJjmjgwtbQlwK5FU424Ef9iFu64aeounen8o5cuBuql5nRl6mFOX7QMx3Cr0XmLyJBRsuuoXlivaGzNchqT4rkmck0SUqeeBSzcpoDdFry4SXZO9I_CIK75bOX4Icw5p8ZFwAzYvE5xhTpAEdRUKMPSDMRD9Vak-WKPWhQBeV8X5LJONhaofMaq0j0HC5sM6arPQR6x2r5y5IPZwVOcUaYqJVlgXOAP72iFwCkZBm30qJV9p5eLSNWizpVUbYIEiwjcqBQ9ZZR2jqszzSEZpsTO1kwQ3jIViewwFJjffBljrp5ZsRDj-vXrdZ-tXVY4ecsgrjUXJJEEMKMCBVFLzuu5is6Hgdr8BUdm8QAPQqvvkqu7W0Gt-2YAgcU4eEG2wzx1485wxNxLgXXG10SwzH12OHxqoMl3_KP22JN9JgP6uS1Br4yLFqo-v3Z-UOAo3x_yfivgcW34uI4VHSF1JiQfJinsSWeHOGPJrDSDvrCNLZbFonX2xaWVOQ3Uf8hXum55xNufLM8Trt4Ga8CBZMY'
+    _ANON_TOKEN = 'eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.eyJib3NzX2lkIjoiMDAwMDAwMDAxIiwiZGV2aWNlX3Rva2VuIjoiQ3ZmTUNzVTh4UGlpYmtDUUVrSzM5NUpnIiwiZGV2aWNlX2lkIjoiMCIsImRldmljZV90eXBlIjoid2ViIiwiZGV2aWNlX29zIjoiYnJvd3NlciIsImRybV9pZCI6bnVsbCwiZXh0cmEiOnsicHJvZmlsZV9pZCI6MX0sImlhdCI6MTY0NjI5MzQxNCwiZXhwIjoxNjQ2Mjk3MDE0fQ.t5qYMiV4RJkAZ9FfmmJtigpzNca0P5ZnI4AEXU61HWVIJd5cIUQlNufOJbN4R3MPJxs7msOVBdosIMaIhF49so_ubufqSNDDK9s3qZRpAUaHvRtiXQWCuuL3Am07IwaR6vO-yNFpNtnhTWp7V-5KkmJjmjgwtbQlwK5FU424Ef9iFu64aeounen8o5cuBuql5nRl6mFOX7QMx3Cr0XmLyJBRsuuoXlivaGzNchqT4rkmck0SUqeeBSzcpoDdFry4SXZO9I_CIK75bOX4Icw5p8ZFwAzYvE5xhTpAEdRUKMPSDMRD9Vak-WKPWhQBeV8X5LJONhaofMaq0j0HC5sM6arPQR6x2r5y5IPZwVOcUaYqJVlgXOAP72iFwCkZBm30qJV9p5eLSNWizpVUbYIEiwjcqBQ9ZZR2jqszzSEZpsTO1kwQ3jIViewwFJjffBljrp5ZsRDj-vXrdZ-tXVY4ecsgrjUXJJEEMKMCBVFLzuu5is6Hgdr8BUdm8QAPQqvvkqu7W0Gt-2YAgcU4eEG2wzx1485wxNxLgXXG10SwzH12OHxqoMl3_KP22JN9JgP6uS1Br4yLFqo-v3Z-UOAo3x_yfivgcW34uI4VHSF1JiQfJinsSWeHOGPJrDSDvrCNLZbFonX2xaWVOQ3Uf8hXum55xNufLM8Trt4Ga8CBZMY'
 
     def _real_extract(self, url):
         lang, episode_id = self._match_valid_url(url).group('lang', 'id')
@@ -21,6 +21,16 @@ class MytvSuperIE(InfoExtractor):
 
         return self._get_episode(programme, episode['currEpisode'], lang or 'tc')
 
+    def _get_token(self, video_id):
+        if self._cookies_passed:
+            session = self._download_json(
+                'https://www.mytvsuper.com/api/auth/getSession/self/', video_id)
+
+            if token := traverse_obj(session, ('user', 'token')):
+                self.cache.store('mytvsuper', 'token', token)
+
+        return self.cache.load('mytvsuper', 'token') or self._ANON_TOKEN
+
     def _get_episode(self, programme, episode, lang):
         episode_name = self._get_mytv_episode_name(episode, lang)
         episode_id = episode['episode_id']
@@ -28,7 +38,7 @@ class MytvSuperIE(InfoExtractor):
         data = self._download_json(
             'https://user-api.mytvsuper.com/v1/video/checkout', episode_id,
             query={'platform': 'web', 'video_id': episode['video_id']},
-            headers={'Authorization': 'Bearer ' + self._TOKEN})
+            headers={'Authorization': 'Bearer ' + self._get_token(episode_id)})
 
         formats = []
         profiles = {profile['quality']: profile['streaming_path'] for profile in data['profiles']}
@@ -42,7 +52,10 @@ class MytvSuperIE(InfoExtractor):
                 'https://wv.drm.tvb.com/wvproxy/mlicense', episode_id,
                 query={'contentid': data['content_id']},
                 data=challenge,
-                headers={'Content-Type': 'application/octet-stream', 'x-user-token': self._TOKEN}).read()
+                headers={
+                    'Content-Type': 'application/octet-stream',
+                    'x-user-token': self._get_token(episode_id),
+                }).read()
 
         return {
             'id': str(episode_id),
@@ -71,12 +84,12 @@ class MytvSuperIE(InfoExtractor):
     def _get_programme_info(self, programme, lang):
         return {
             'release_year': int_or_none(next((tag['name_en'] for tag in programme['tags']
-                if tag['type'] == 'prod_year'), None)),
+                                              if tag['type'] == 'prod_year'), None)),
             'location': next((tag['name_' + lang] for tag in programme['tags']
-                if tag['type'] == 'country_of_origin'), None),
+                              if tag['type'] == 'country_of_origin'), None),
             'age_limit': 18 if programme['parental_lock'] else None,
             'categories': [tag['name_' + lang] for tag in programme['tags']
-                if tag['type'] in ('main_cat', 'category', 'sub_category')],
+                           if tag['type'] in ('main_cat', 'category', 'sub_category')],
             'cast': traverse_obj(programme, ('artists', ..., 'name_' + lang)),
         }
 
