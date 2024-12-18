@@ -121,8 +121,9 @@ class Mp4DecryptPP(PostProcessor):
 
             def license_callback(challenge):
                 self.to_screen(f'Fetching keys from {license_url}')
-                return self._downloader.urlopen(Request(license_url, data=challenge,
-                                                        headers={'Content-Type': 'application/octet-stream'})).read()
+                return self._downloader.urlopen(Request(
+                    license_url, data=challenge,
+                    headers={'Content-Type': 'application/octet-stream'})).read()
 
         if license_callback:
             return self._fetch_keys(pssh, license_callback)

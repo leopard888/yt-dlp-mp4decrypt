@@ -59,7 +59,7 @@ class MytvSuperIE(InfoExtractor):
 
         return {
             'id': str(episode_id),
-            'title': episode_name,
+            'title': '%s %s' % (programme['name_' + lang], episode_name),
             'formats': formats,
             'description': episode['desc_' + lang],
             'subtitles': {sub['language']: [{'url': sub['path']}] for sub in data['subtitles']},

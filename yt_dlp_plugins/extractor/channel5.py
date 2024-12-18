@@ -1,7 +1,6 @@
 import os
 
 from yt_dlp.extractor.common import InfoExtractor
-from yt_dlp.networking._requests import RequestsRH
 from yt_dlp.utils import (
     int_or_none,
     traverse_obj,
@@ -11,6 +10,7 @@ from yt_dlp.utils import (
 class Channel5IE(InfoExtractor):
     _VALID_URL = r'https://www\.channel5\.com/(?:show/)?(?P<show>[a-z0-9\-]+)/(?P<season>[a-z0-9\-]+)(?:/(?P<id>[a-z0-9\-]+))?'
     _GEO_COUNTRIES = ['GB']
+    _API_BASE = 'https://cassie-auth.channel5.com/api/v2/media'
     _GUIDANCE = {
         'Guidance': 16,
         'GuidancePlus': 18,
@@ -56,13 +56,13 @@ class Channel5IE(InfoExtractor):
                 'series': 'sh_title',
                 'series_number': ('sea_num', {int_or_none}),
                 'episode_number': ('ep_num', {int_or_none}),
-                'genres': (('genre',)),
+                'genres': ('genre',),
             }),
             'age_limit': self._GUIDANCE.get(data['rat']),
         }
 
         media = self._download_json(
-            'https://cassie-auth.channel5.com/api/v2/media/my5firetv/%s.json' % data['id'],
+            '%s/my5firetv/%s.json' % (self._API_BASE, data['id']),
             data['id'])
 
         if asset := traverse_obj(media, ('assets', 0)):
@@ -86,7 +86,10 @@ class Channel5IE(InfoExtractor):
             }
 
     def _add_handler(self, director):
-        class Channel5RH(RequestsRH):
+        req = self._create_request(self._API_BASE)
+        default_handler = director._get_handlers(req)[0]
+
+        class Channel5RH(type(default_handler)):
             def _make_sslcontext(self, *args, **kwargs):
                 context = super()._make_sslcontext(*args, **kwargs)
                 context.set_ciphers('ALL:@SECLEVEL=0')
@@ -98,4 +101,4 @@ class Channel5IE(InfoExtractor):
         director.add_handler(handler)
         director.preferences.add(
             lambda rh, req:
-            500 if rh == handler and req.url.startswith('https://cassie-auth.channel5.com/') else 0)
+            500 if rh == handler and req.url.startswith(self._API_BASE) else 0)
