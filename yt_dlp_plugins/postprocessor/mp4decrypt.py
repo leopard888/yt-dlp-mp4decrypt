@@ -1,6 +1,6 @@
 import subprocess
 from os import name as os_name
-from os import rename, replace
+from os import path, rename, replace
 from re import sub
 
 from pywidevine.cdm import Cdm
@@ -176,18 +176,22 @@ class Mp4DecryptPP(PostProcessor):
         return keys
 
     def _decrypt_part(self, keys, filepath):
+        cwd = path.dirname(filepath)
+        filename = path.basename(filepath)
         originalpath = filepath
 
         if os_name == 'nt':
             # mp4decrypt on Windows cannot handle certain filenames
-            filepath = sub(r'[^0-9A-z_\-.]+', '', filepath)
+            filename = sub(r'[^\x20-\x7E]+', '', filename)
+            filepath = path.join(cwd, filename)
             rename(originalpath, filepath)
 
-        tmppath = '_decrypted_' + filepath
-        cmd = ('mp4decrypt', *keys, filepath, tmppath)
+        tmpname = '_decrypted_' + filename
+        cmd = ('mp4decrypt', *keys, filename, tmpname)
 
         _, stderr, returncode = Popen.run(
-            cmd, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, stdin=subprocess.PIPE)
+            cmd, cwd=cwd or None, text=True,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, stdin=subprocess.PIPE)
 
         if returncode != 0:
             raise PostProcessingError(stderr)
@@ -196,4 +200,4 @@ class Mp4DecryptPP(PostProcessor):
             rename(filepath, originalpath)
             filepath = originalpath
 
-        replace(tmppath, filepath)
+        replace(path.join(cwd, tmpname), filepath)
