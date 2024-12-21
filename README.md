@@ -20,7 +20,7 @@ Use `--use-postprocessor` to activate the plugin. This can be added to configura
 yt-dlp --allow-unplayable-formats --use-postprocessor Mp4Decrypt:devicepath=<path_to_wvd_file> <video_url>
 ```
 
-When requesting merging of multiple formats, a warning will appear saying the formats won't be merged. This plugin forces the merge to take place.
+When requesting merging of multiple formats with `--allow-unplayable-formats`, a warning will appear saying the formats won't be merged. This plugin forces the merge to take place.
 
 ## Supported extractors
 
