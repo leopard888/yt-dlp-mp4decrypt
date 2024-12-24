@@ -7,9 +7,13 @@ from pywidevine.cdm import Cdm
 from pywidevine.device import Device
 from pywidevine.pssh import PSSH
 from yt_dlp.networking.common import Request
-from yt_dlp.postprocessor import FFmpegMergerPP
 from yt_dlp.postprocessor.common import PostProcessor
-from yt_dlp.utils import Popen, PostProcessingError
+from yt_dlp.utils import (
+    Popen,
+    PostProcessingError,
+    prepend_extension,
+    YoutubeDLError,
+)
 
 
 class Mp4DecryptPP(PostProcessor):
@@ -19,7 +23,14 @@ class Mp4DecryptPP(PostProcessor):
         self._kwargs = kwargs
         self._pssh = {}
         self._license_urls = {}
+        self._encrypted_mpds = []
         self._keys = {}
+
+        class _FileDecrypter(PostProcessor):
+            def run(_self, info):
+                return self._real_run(info)
+
+        decryptor = _FileDecrypter(downloader)
 
         class _KeyFetcher(PostProcessor):
             def run(_self, info):
@@ -30,8 +41,13 @@ class Mp4DecryptPP(PostProcessor):
                 return [], info
 
             def _get_keys(_self, info, part):
-                if part.get('has_drm') and self._is_mpd(part):
-                    self._get_keys(info, part)
+                if self._is_mpd(part) and self._has_drm(part):
+                    if not self._get_keys(info, part):
+                        raise YoutubeDLError('No keys found for ' + part['format_id'])
+
+                    if not decryptor in info.get('__postprocessors', []):
+                        info.setdefault('__postprocessors', [])
+                        info['__postprocessors'].append(decryptor)
 
         downloader.add_post_processor(_KeyFetcher(downloader), when='before_dl')
 
@@ -55,18 +71,35 @@ class Mp4DecryptPP(PostProcessor):
                         self._license_urls[mpd_url] = element.get('{urn:brightcove:2015}licenseAcquisitionUrl')
                         found = True
 
-                if elements and not found:
-                    # remove playready, etc.
-                    return []
+                if elements and found:
+                    # treat formats as unprotected
+                    for parent in mpd_doc.findall('.//*/..[{*}ContentProtection]'):
+                        for child in parent.findall('{*}ContentProtection'):
+                            parent.remove(child)
+
+                    self._encrypted_mpds.append(mpd_url)
 
                 return oldmpdmethod(mpd_doc, *args, **kwargs)
 
             ie._parse_mpd_periods = newmpdmethod
+
+            if hasattr(ie, '_parse_brightcove_metadata'):
+                oldbcmethod = ie._parse_brightcove_metadata
+
+                def newbcmethod(json_data, *args, **kwargs):
+                    for source in json_data.get('sources') or []:
+                        if 'com.widevine.alpha' in source.get('key_systems') or {}:
+                            del source['key_systems']
+
+                    return oldbcmethod(json_data, *args, **kwargs)
+
+                ie._parse_brightcove_metadata = newbcmethod
+
             oldextmethod(ie)
 
         downloader.add_info_extractor = newextmethod
 
-    def run(self, info):
+    def _real_run(self, info):
         encrypted = []
 
         if 'requested_formats' in info:
@@ -76,26 +109,21 @@ class Mp4DecryptPP(PostProcessor):
 
         if encrypted:
             self.to_screen('Decrypting format(s)')
-            decrypted = True
 
             for part in encrypted:
                 if self._is_mpd(part) and (keys := self._get_keys(info, part)):
                     self._decrypt_part(keys, part['filepath'])
-                else:
-                    self.to_screen('Cannot decrypt ' + part['format_id'])
-                    decrypted = False
-
-            if decrypted and '+' in info['format_id']:
-                info['__files_to_merge'] = [part['filepath'] for part in info['requested_formats']]
-                info = self._downloader.run_pp(FFmpegMergerPP(self._downloader), info)
 
         return [], info
 
+    def _has_drm(self, info):
+        return info.get('manifest_url') in self._encrypted_mpds
+
     def _is_encrypted(self, info):
-        return 'filepath' in info and info.get('has_drm')
+        return 'filepath' in info and self._has_drm(info)
 
     def _is_mpd(self, info):
-        return info['container'] in ('mp4_dash', 'm4a_dash')
+        return info.get('container') in ('mp4_dash', 'm4a_dash')
 
     def _get_keys(self, info, part):
         if key := info.get('_cenc_key'):
@@ -186,7 +214,7 @@ class Mp4DecryptPP(PostProcessor):
             filepath = path.join(cwd, filename)
             rename(originalpath, filepath)
 
-        tmpname = '_decrypted_' + filename
+        tmpname = prepend_extension(filename, 'decrypted')
         cmd = ('mp4decrypt', *keys, filename, tmpname)
 
         _, stderr, returncode = Popen.run(

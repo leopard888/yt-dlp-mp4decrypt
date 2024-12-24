@@ -111,9 +111,6 @@ class MytvSuperPlaylistIE(MytvSuperIE):
                 'end_episode_no': programme['latest_episode_no'],
             })
 
-        def _get_entry(idx):
-            yield self._get_episode(programme, episodes['items'][idx], lang)
-
         return {
             '_type': 'playlist',
             'id': programme_id,
@@ -121,5 +118,7 @@ class MytvSuperPlaylistIE(MytvSuperIE):
             'description': programme['long_desc_' + lang],
             'thumbnails': [{'id': size, 'url': programme['image'][size]} for size in programme['image']],
             **self._get_programme_info(programme, lang),
-            'entries': InAdvancePagedList(_get_entry, len(episodes['items']), 1),
+            'entries': InAdvancePagedList(
+                lambda idx: (yield self._get_episode(programme, episodes['items'][idx], lang)),
+                len(episodes['items']), 1),
         }

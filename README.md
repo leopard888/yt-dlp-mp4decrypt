@@ -2,6 +2,8 @@ This [yt-dlp](https://github.com/yt-dlp/yt-dlp) plugin integrates `mp4decrypt` a
 
 ## Prerequisites
 
+- `yt-dlp`
+    - For Windows users, the standalone version (i.e. You downloaded the `yt-dlp.exe` file on its own) will not work. Install and use the PIP version instead: `pip install -U yt-dlp`.
 - The `mp4decrypt` executable (part of [Bento4](https://www.bento4.com/)) in your system's PATH (or in the same directory as `yt-dlp`)
 - A CDM in .wvd format
 
@@ -17,21 +19,12 @@ python3 -m pip install -U https://github.com/aarubui/yt-dlp-mp4decrypt/archive/m
 Use `--use-postprocessor` to activate the plugin. This can be added to configuration files without effects for unencrypted videos.
 
 ```shell
-yt-dlp --allow-unplayable-formats --use-postprocessor Mp4Decrypt:devicepath=<path_to_wvd_file> <video_url>
+yt-dlp --use-postprocessor Mp4Decrypt:devicepath=<path_to_wvd_file> <video_url>
 ```
-
-When requesting merging of multiple formats with `--allow-unplayable-formats`, a warning will appear saying the formats won't be merged. This plugin forces the merge to take place.
 
 ## Supported extractors
 
 Sites supported by `yt-dlp` where unplayable formats are returned and the license URL is provided in the `mpd` file (e.g. Brightcove) will work out of the box with this plugin. Extractors which give the `This video is DRM protected` error even with `--allow-unplayable-formats` won't work.
-
-## Format selection
-
-With more video formats available, selecting the right ones becomes important. Specifically, this involves avoiding the `m3u8` formats with FairPlay protection. Apart from using `-f -` to manually pick the right formats, the following filters can be helpful:
-
-- `bestvideo*[has_drm=0]+bestaudio[has_drm=0]/best[has_drm=0]`: one of the default selectors modified to only include unprotected formats
-- `bestvideo[container=mp4_dash]+bestaudio[container=m4a_dash]`: choose only the MPEG-DASH formats
 
 ## Extending support
 
@@ -41,7 +34,7 @@ Add support for a site by writing your own [plugin](https://github.com/yt-dlp/yt
 - `_license_url` (URL to license server)
 - `_license_callback` (function which takes the `challenge` data and returns the license server response)
 
-Use `_license_callback` when communication with the license server needs customisation (e.g. server request needs to be base64-encoded).
+Use `_license_callback` when communication with the license server needs customisation (e.g. server request needs special headers).
 
 ### Example
 
