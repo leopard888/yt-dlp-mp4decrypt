@@ -1,7 +1,6 @@
+import os
+import re
 import subprocess
-from os import name as os_name
-from os import path, rename, replace
-from re import sub
 
 from pywidevine.cdm import Cdm
 from pywidevine.device import Device
@@ -11,9 +10,9 @@ from yt_dlp.postprocessor.common import PostProcessor
 from yt_dlp.utils import (
     Popen,
     PostProcessingError,
+    YoutubeDLError,
     prepend_extension,
     variadic,
-    YoutubeDLError,
 )
 
 
@@ -77,9 +76,6 @@ class Mp4DecryptPP(PostProcessor):
         downloader.add_info_extractor = newextmethod
 
     def run(self, info):
-        if '__real_download' in info:
-            raise PostProcessingError(f'{self.PP_NAME} must be used with \'when=before_dl\'')
-
         if 'requested_formats' in info:
             for part in info['requested_formats']:
                 if self._is_encrypted(part):
@@ -94,6 +90,9 @@ class Mp4DecryptPP(PostProcessor):
             part.get('manifest_url') in self._encrypted_mpds
 
     def _add_keys(self, info, part):
+        if '__real_download' in info:
+            raise PostProcessingError(f'{self.PP_NAME} must be used with \'when=before_dl\'')
+
         if keys := self._get_keys(info, part):
             part['_mp4decrypt'] = keys
         else:
@@ -184,6 +183,7 @@ class Mp4DecryptPP(PostProcessor):
 
 class Mp4DecryptDecryptor(PostProcessor):
     def run(self, info):
+        to_delete = []
         encrypted = []
 
         if 'requested_formats' in info:
@@ -195,27 +195,35 @@ class Mp4DecryptDecryptor(PostProcessor):
             self.to_screen('[Mp4Decrypt] Decrypting format(s)', prefix=False)
 
             for part in encrypted:
-                self._decrypt_part(part['_mp4decrypt'], part['filepath'])
+                self._decrypt_part(info, part, to_delete)
                 del part['_mp4decrypt']
 
-        return [], info
+        return to_delete, info
 
     def _is_encrypted(self, info):
         return 'filepath' in info and '_mp4decrypt' in info
 
-    def _decrypt_part(self, keys, filepath):
-        cwd = path.dirname(filepath)
-        filename = path.basename(filepath)
-        originalpath = filepath
-
-        if os_name == 'nt':
-            # mp4decrypt on Windows cannot handle certain filenames
-            filename = sub(r'[^\x20-\x7E]+', '', filename)
-            filepath = path.join(cwd, filename)
-            rename(originalpath, filepath)
-
+    def _decrypt_part(self, info, part, to_delete):
+        filepath = part['filepath']
+        cwd = os.path.dirname(filepath)
+        filename = os.path.basename(filepath)
         tmpname = prepend_extension(filename, 'decrypted')
-        cmd = ('mp4decrypt', *keys, filename, tmpname)
+        tmppath = os.path.join(cwd, tmpname)
+        renames = {}
+
+        if os.name == 'nt':
+            # mp4decrypt on Windows cannot handle certain filenames
+            safe_filename = re.sub(r'[^\x20-\x7E]+', '', filename)
+
+            if safe_filename != filename:
+                os.rename(os.path.join(cwd, filename), os.path.join(cwd, safe_filename))
+                renames[safe_filename] = filename
+                filename = safe_filename
+                safe_tmpname = prepend_extension(safe_filename, 'decrypted')
+                renames[safe_tmpname] = tmpname
+                tmpname = safe_tmpname
+
+        cmd = ('mp4decrypt', *part['_mp4decrypt'], filename, tmpname)
 
         _, stderr, returncode = Popen.run(
             cmd, cwd=cwd or None, text=True,
@@ -224,8 +232,12 @@ class Mp4DecryptDecryptor(PostProcessor):
         if returncode != 0:
             raise PostProcessingError(stderr)
 
-        if filepath != originalpath:
-            rename(filepath, originalpath)
-            filepath = originalpath
+        for from_name, to_name in renames.items():
+            os.replace(os.path.join(cwd, from_name), os.path.join(cwd, to_name))
 
-        replace(path.join(cwd, tmpname), filepath)
+        if filepath in info.get('__files_to_merge', []):
+            idx = info['__files_to_merge'].index(filepath)
+            info['__files_to_merge'][idx] = tmppath
+            to_delete.append(filepath)
+        else:
+            os.rename(tmppath, filepath)
