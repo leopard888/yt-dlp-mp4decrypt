@@ -12,6 +12,7 @@ from yt_dlp.utils import (
     Popen,
     PostProcessingError,
     prepend_extension,
+    variadic,
     YoutubeDLError,
 )
 
@@ -25,31 +26,7 @@ class Mp4DecryptPP(PostProcessor):
         self._license_urls = {}
         self._encrypted_mpds = []
         self._keys = {}
-
-        class _FileDecrypter(PostProcessor):
-            def run(_self, info):
-                return self._real_run(info)
-
-        decryptor = _FileDecrypter(downloader)
-
-        class _KeyFetcher(PostProcessor):
-            def run(_self, info):
-                for part in info.get('requested_formats', []):
-                    _self._get_keys(info, part)
-
-                _self._get_keys(info, info)
-                return [], info
-
-            def _get_keys(_self, info, part):
-                if self._is_mpd(part) and self._has_drm(part):
-                    if not self._get_keys(info, part):
-                        raise YoutubeDLError('No keys found for ' + part['format_id'])
-
-                    if not decryptor in info.get('__postprocessors', []):
-                        info.setdefault('__postprocessors', [])
-                        info['__postprocessors'].append(decryptor)
-
-        downloader.add_post_processor(_KeyFetcher(downloader), when='before_dl')
+        self._decryptor = Mp4DecryptDecryptor(downloader)
 
     def _sniff_mpds(self, downloader):
         oldextmethod = downloader.add_info_extractor
@@ -99,35 +76,36 @@ class Mp4DecryptPP(PostProcessor):
 
         downloader.add_info_extractor = newextmethod
 
-    def _real_run(self, info):
-        encrypted = []
+    def run(self, info):
+        if '__real_download' in info:
+            raise PostProcessingError(f'{self.PP_NAME} must be used with \'when=before_dl\'')
 
         if 'requested_formats' in info:
-            encrypted = [p for p in info['requested_formats'] if self._is_encrypted(p)]
-        elif info.get('__real_download') and self._is_encrypted(info):
-            encrypted.append(info)
-
-        if encrypted:
-            self.to_screen('Decrypting format(s)')
-
-            for part in encrypted:
-                if self._is_mpd(part) and (keys := self._get_keys(info, part)):
-                    self._decrypt_part(keys, part['filepath'])
+            for part in info['requested_formats']:
+                if self._is_encrypted(part):
+                    self._add_keys(info, part)
+        elif self._is_encrypted(info):
+            self._add_keys(info, info)
 
         return [], info
 
-    def _has_drm(self, info):
-        return info.get('manifest_url') in self._encrypted_mpds
+    def _is_encrypted(self, part):
+        return part.get('container') in ('mp4_dash', 'm4a_dash') and \
+            part.get('manifest_url') in self._encrypted_mpds
 
-    def _is_encrypted(self, info):
-        return 'filepath' in info and self._has_drm(info)
+    def _add_keys(self, info, part):
+        if keys := self._get_keys(info, part):
+            part['_mp4decrypt'] = keys
+        else:
+            raise YoutubeDLError('No keys found for ' + part['format_id'])
 
-    def _is_mpd(self, info):
-        return info.get('container') in ('mp4_dash', 'm4a_dash')
+        if self._decryptor not in info.get('__postprocessors', []):
+            info.setdefault('__postprocessors', [])
+            info['__postprocessors'].append(self._decryptor)
 
     def _get_keys(self, info, part):
-        if key := info.get('_cenc_key'):
-            return ('--key', key)
+        if keys := info.get('_cenc_key'):
+            return tuple([arg for key in variadic(keys, str) for arg in ('--key', key)])
 
         mpd_url = part['manifest_url']
 
@@ -202,6 +180,28 @@ class Mp4DecryptPP(PostProcessor):
 
         self._keys[pssh] = keys
         return keys
+
+
+class Mp4DecryptDecryptor(PostProcessor):
+    def run(self, info):
+        encrypted = []
+
+        if 'requested_formats' in info:
+            encrypted = [p for p in info['requested_formats'] if self._is_encrypted(p)]
+        elif info.get('__real_download') and self._is_encrypted(info):
+            encrypted.append(info)
+
+        if encrypted:
+            self.to_screen('[Mp4Decrypt] Decrypting format(s)', prefix=False)
+
+            for part in encrypted:
+                self._decrypt_part(part['_mp4decrypt'], part['filepath'])
+                del part['_mp4decrypt']
+
+        return [], info
+
+    def _is_encrypted(self, info):
+        return 'filepath' in info and '_mp4decrypt' in info
 
     def _decrypt_part(self, keys, filepath):
         cwd = path.dirname(filepath)

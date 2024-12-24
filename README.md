@@ -19,7 +19,7 @@ python3 -m pip install -U https://github.com/aarubui/yt-dlp-mp4decrypt/archive/m
 Use `--use-postprocessor` to activate the plugin. This can be added to configuration files without effects for unencrypted videos.
 
 ```shell
-yt-dlp --use-postprocessor Mp4Decrypt:devicepath=<path_to_wvd_file> <video_url>
+yt-dlp --use-postprocessor Mp4Decrypt:when=before_dl;devicepath=<path_to_wvd_file> <video_url>
 ```
 
 ## Supported extractors
