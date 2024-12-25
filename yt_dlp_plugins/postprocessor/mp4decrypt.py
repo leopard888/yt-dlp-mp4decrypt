@@ -16,64 +16,33 @@ from yt_dlp.utils import (
 )
 
 
+def _inject_mixin(obj, mixin, pp):
+    if obj.__module__ != __name__:
+        obj_type = type(obj)
+        obj.__class__ = type(obj_type.__name__, (mixin, obj_type), {
+            '_mixin_class': obj_type,
+            '_mixin_pp': pp,
+        })
+
+
 class Mp4DecryptPP(PostProcessor):
     def __init__(self, downloader=None, **kwargs):
         PostProcessor.__init__(self, downloader)
-        self._sniff_mpds(downloader)
         self._kwargs = kwargs
         self._pssh = {}
         self._license_urls = {}
-        self._encrypted_mpds = []
         self._keys = {}
         self._decryptor = Mp4DecryptDecryptor(downloader)
 
-    def _sniff_mpds(self, downloader):
-        oldextmethod = downloader.add_info_extractor
+    def set_downloader(self, downloader):
+        _inject_mixin(downloader, Mp4DecryptDownloader, self)
+        return super().set_downloader(downloader)
 
-        def newextmethod(ie):
-            oldmpdmethod = ie._parse_mpd_periods
+    def add_mpd(self, mpd_url, pssh, license_url):
+        if pssh:
+            self._pssh[mpd_url] = pssh
 
-            def newmpdmethod(mpd_doc, *args, **kwargs):
-                elements = mpd_doc.findall('.//{*}ContentProtection')
-                found = False
-
-                for element in elements:
-                    if element.get('schemeIdUri').lower() == PSSH.SystemId.Widevine.urn:
-                        mpd_url = kwargs.get('mpd_url') or args[2]
-
-                        if pssh := element.findtext('./{*}pssh'):
-                            self._pssh[mpd_url] = pssh
-
-                        self._license_urls[mpd_url] = element.get('{urn:brightcove:2015}licenseAcquisitionUrl')
-                        found = True
-
-                if elements and found:
-                    # treat formats as unprotected
-                    for parent in mpd_doc.findall('.//*/..[{*}ContentProtection]'):
-                        for child in parent.findall('{*}ContentProtection'):
-                            parent.remove(child)
-
-                    self._encrypted_mpds.append(mpd_url)
-
-                return oldmpdmethod(mpd_doc, *args, **kwargs)
-
-            ie._parse_mpd_periods = newmpdmethod
-
-            if hasattr(ie, '_parse_brightcove_metadata'):
-                oldbcmethod = ie._parse_brightcove_metadata
-
-                def newbcmethod(json_data, *args, **kwargs):
-                    for source in json_data.get('sources') or []:
-                        if 'com.widevine.alpha' in source.get('key_systems') or {}:
-                            del source['key_systems']
-
-                    return oldbcmethod(json_data, *args, **kwargs)
-
-                ie._parse_brightcove_metadata = newbcmethod
-
-            oldextmethod(ie)
-
-        downloader.add_info_extractor = newextmethod
+        self._license_urls[mpd_url] = license_url
 
     def run(self, info):
         if 'requested_formats' in info:
@@ -87,7 +56,7 @@ class Mp4DecryptPP(PostProcessor):
 
     def _is_encrypted(self, part):
         return part.get('container') in ('mp4_dash', 'm4a_dash') and \
-            part.get('manifest_url') in self._encrypted_mpds
+            part.get('manifest_url') in self._license_urls
 
     def _add_keys(self, info, part):
         if '__real_download' in info:
@@ -179,6 +148,42 @@ class Mp4DecryptPP(PostProcessor):
 
         self._keys[pssh] = keys
         return keys
+
+
+class Mp4DecryptDownloader:
+    def add_info_extractor(self, ie):
+        _inject_mixin(ie, Mp4DecryptExtractor, self._mixin_pp)
+        return self._mixin_class.add_info_extractor(self, ie)
+
+
+class Mp4DecryptExtractor:
+    def _parse_mpd_periods(self, mpd_doc, *args, **kwargs):
+        elements = mpd_doc.findall('.//{*}ContentProtection')
+        found = False
+
+        for element in elements:
+            if element.get('schemeIdUri').lower() == PSSH.SystemId.Widevine.urn:
+                self._mixin_pp.add_mpd(
+                    kwargs.get('mpd_url') or args[2],
+                    element.findtext('./{*}pssh'),
+                    element.get('{urn:brightcove:2015}licenseAcquisitionUrl'),
+                )
+                found = True
+
+        if elements and found:
+            # treat formats as unprotected
+            for parent in mpd_doc.findall('.//*/..[{*}ContentProtection]'):
+                for child in parent.findall('{*}ContentProtection'):
+                    parent.remove(child)
+
+        return self._mixin_class._parse_mpd_periods(self, mpd_doc, *args, **kwargs)
+
+    def _parse_brightcove_metadata(self, json_data, *args, **kwargs):
+        for source in json_data.get('sources') or []:
+            if 'com.widevine.alpha' in source.get('key_systems') or {}:
+                del source['key_systems']
+
+        return self._mixin_class._parse_brightcove_metadata(self, json_data, *args, **kwargs)
 
 
 class Mp4DecryptDecryptor(PostProcessor):
