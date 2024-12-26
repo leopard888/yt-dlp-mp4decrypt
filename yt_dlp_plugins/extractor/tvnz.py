@@ -23,12 +23,14 @@ class TVNZIE(InfoExtractor):
                     video['publisherMetadata']['brightcoveAccountId'],
                     video['publisherMetadata']['brightcovePlayerId'],
                     video['publisherMetadata']['brightcoveVideoId']),
-                'title': video['title'],
-                'thumbnail': video['image']['src'],
-                'description': video['synopsis'],
-                'series': video['title'],
-                'season_number': int_or_none(video['seasonNumber']),
-                'episode_number': int_or_none(video['episodeNumber']),
+                **traverse_obj(video, {
+                    'title': 'title',
+                    'thumbnail': ('image', 'src'),
+                    'description': 'synopsis',
+                    'series': 'title',
+                    'season_number': ('seasonNumber', {int_or_none}),
+                    'episode_number': ('episodeNumber', {int_or_none}),
+                }),
             }
 
         if video['type'] == 'sportVideo':

@@ -3,6 +3,7 @@ from yt_dlp.utils import (
     InAdvancePagedList,
     int_or_none,
     traverse_obj,
+    variadic,
 )
 
 
@@ -83,16 +84,16 @@ class MytvSuperIE(InfoExtractor):
         return '%s/%s/%s' % (name[0:4], name[4:6], name[6:8])
 
     def _get_programme_info(self, programme, lang):
-        return {
-            'release_year': int_or_none(next((tag['name_en'] for tag in programme['tags']
-                                              if tag['type'] == 'prod_year'), None)),
-            'location': next((tag['name_' + lang] for tag in programme['tags']
-                              if tag['type'] == 'country_of_origin'), None),
-            'age_limit': 18 if programme['parental_lock'] else None,
-            'categories': [tag['name_' + lang] for tag in programme['tags']
-                           if tag['type'] in ('main_cat', 'category', 'sub_category')],
-            'cast': traverse_obj(programme, ('artists', ..., 'name_' + lang)),
-        }
+        def tag_filter(types):
+            return lambda tags: [t for t in tags if t['type'] in variadic(types)]
+
+        return traverse_obj(programme, {
+            'release_year': ('tags', {tag_filter('prod_year')}, 0, 'name_en', {int_or_none}),
+            'location': ('tags', {tag_filter('country_of_origin')}, 0, 'name_' + lang),
+            'age_limit': ('parental_lock', {lambda x: 18 if x else None}),
+            'categories': ('tags', {tag_filter(('main_cat', 'category', 'sub_category'))}, ..., 'name_' + lang),
+            'cast': ('artists', ..., 'name_' + lang),
+        })
 
 
 class MytvSuperPlaylistIE(MytvSuperIE):

@@ -65,12 +65,14 @@ class ITVXIE(InfoExtractor):
             })
 
         info_dict = {
-            'id': traverse_obj(episode, ('encodedEpisodeId', 'letterA')),
-            'title': traverse_obj(episode, 'episodeTitle', 'heroCtaLabel'),
-            'description': traverse_obj(episode, 'synopsis', 'longDescription'),
-            'release_year': episode.get('productionYear'),
-            'series_number': episode.get('series'),
-            'episode_number': episode.get('episode'),
+            **traverse_obj(episode, {
+                'id': ('encodedEpisodeId', 'letterA', any),
+                'title': (('episodeTitle', 'heroCtaLabel'), any),
+                'description': (('synopsis', 'longDescription'), any),
+                'release_year': 'productionYear',
+                'series_number': 'series',
+                'episode_number': 'episode',
+            }),
             'duration': parse_duration(traverse_obj(data, ('Playlist', 'Video', 'Duration'))),
             'thumbnail': episode['image'].format(width=1920, height=1080, quality=100, blur=0, bg='false'),
         }
