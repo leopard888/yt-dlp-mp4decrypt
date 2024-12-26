@@ -180,7 +180,7 @@ class Mp4DecryptExtractor:
 
     def _parse_brightcove_metadata(self, json_data, *args, **kwargs):
         for source in json_data.get('sources') or []:
-            if 'com.widevine.alpha' in source.get('key_systems') or {}:
+            if 'com.widevine.alpha' in source.get('key_systems', {}):
                 del source['key_systems']
 
         return self._mixin_class._parse_brightcove_metadata(self, json_data, *args, **kwargs)

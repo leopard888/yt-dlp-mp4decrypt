@@ -3,7 +3,7 @@ import json
 from yt_dlp.extractor.sonyliv import SonyLIVIE
 
 
-class SonyLIVDRMIE(SonyLIVIE):
+class SonyLIVDRMIE(SonyLIVIE, plugin_name='yt-dlp-mp4decrypt'):
     _license_info = {}
 
     def _download_json(self, url, video_id, *args, **kwargs):
