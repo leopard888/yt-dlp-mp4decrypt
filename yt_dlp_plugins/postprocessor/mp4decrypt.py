@@ -1,3 +1,4 @@
+import hashlib
 import os
 import re
 import subprocess
@@ -88,6 +89,15 @@ class Mp4DecryptPP(PostProcessor):
         if keys := self._keys.get(pssh):
             return keys
 
+        cache_args = ('mp4decrypt-pssh', hashlib.md5(pssh.encode('ascii')).hexdigest())
+
+        if (data := self._downloader.cache.load(*cache_args)) \
+                and data['pssh'] == pssh and (keys := data['keys']):
+            for i in range(1, len(keys), 2):
+                self.to_screen(f'Loaded key from cache: {keys[i]}')
+            self._keys[pssh] = keys
+            return keys
+
         license_callback = info.get('_license_callback')
         license_url = info.get('_license_url', self._license_urls.get(mpd_url))
 
@@ -100,7 +110,7 @@ class Mp4DecryptPP(PostProcessor):
                     headers={'Content-Type': 'application/octet-stream'})).read()
 
         if license_callback:
-            return self._fetch_keys(pssh, license_callback)
+            return self._fetch_keys(pssh, license_callback, cache_args)
 
         return ()
 
@@ -108,16 +118,11 @@ class Mp4DecryptPP(PostProcessor):
         def find_wv_pssh_offsets(raw):
             offset = 0
 
-            while True:
-                offset = raw.find(b'pssh', offset)
-
-                if offset == -1:
-                    break
-
+            while (offset := raw.find(b'pssh', offset)) != -1:
                 pssh_offset = offset - 4
                 size = int.from_bytes(raw[pssh_offset:offset], byteorder='big')
                 offset += size
-                yield PSSH(raw[pssh_offset: pssh_offset + size])
+                yield PSSH(raw[pssh_offset:pssh_offset + size])
 
         init_data = self._downloader.urlopen(Request(
             part['fragment_base_url'] + part['fragments'][0]['path'],
@@ -131,7 +136,7 @@ class Mp4DecryptPP(PostProcessor):
         self.report_warning('Could not find PSSH for ' + part['format_id'])
         return None
 
-    def _fetch_keys(self, pssh, callback):
+    def _fetch_keys(self, pssh, callback, cache_args):
         keys = ()
 
         if devicepath := self._kwargs.get('devicepath'):
@@ -147,6 +152,7 @@ class Mp4DecryptPP(PostProcessor):
                     keys += ('--key', keyarg)
 
         self._keys[pssh] = keys
+        self._downloader.cache.store(*cache_args, {'pssh': pssh, 'keys': keys})
         return keys
 
 

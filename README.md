@@ -3,7 +3,7 @@ This [yt-dlp](https://github.com/yt-dlp/yt-dlp) plugin integrates `mp4decrypt` a
 ## Prerequisites
 
 - `yt-dlp`
-    - For Windows users, the standalone version (i.e. You downloaded the `yt-dlp.exe` file on its own) will not work. Install and use the PIP version instead: `pip install -U yt-dlp`.
+    - If the standalone version (i.e. You downloaded the `yt-dlp` executable on its own) doesn't work, install and use the PIP version instead: `pip install -U yt-dlp`.
 - The `mp4decrypt` executable (part of [Bento4](https://www.bento4.com/)) in your system's PATH (or in the same directory as `yt-dlp`)
 - A CDM in .wvd format
 
