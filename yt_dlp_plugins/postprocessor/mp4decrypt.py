@@ -28,15 +28,16 @@ def _inject_mixin(obj, mixin, pp):
 
 class Mp4DecryptPP(PostProcessor):
     def __init__(self, downloader=None, **kwargs):
-        PostProcessor.__init__(self, downloader)
+        self._decryptor = Mp4DecryptDecryptor()
+        super().__init__(downloader)
         self._kwargs = kwargs
         self._pssh = {}
         self._license_urls = {}
         self._keys = {}
-        self._decryptor = Mp4DecryptDecryptor(downloader)
 
     def set_downloader(self, downloader):
         _inject_mixin(downloader, Mp4DecryptDownloader, self)
+        self._decryptor.set_downloader(downloader)
         return super().set_downloader(downloader)
 
     def add_mpd(self, mpd_url, pssh, license_url):
@@ -204,7 +205,6 @@ class Mp4DecryptDecryptor(PostProcessor):
 
         if encrypted:
             self.to_screen('[Mp4Decrypt] Decrypting format(s)', prefix=False)
-
             for part in encrypted:
                 self._decrypt_part(info, part, to_delete)
                 del part['_mp4decrypt']
@@ -235,7 +235,6 @@ class Mp4DecryptDecryptor(PostProcessor):
                 tmpname = safe_tmpname
 
         cmd = ('mp4decrypt', *part['_mp4decrypt'], filename, tmpname)
-
         _, stderr, returncode = Popen.run(
             cmd, cwd=cwd or None, text=True,
             stdout=subprocess.PIPE, stderr=subprocess.PIPE, stdin=subprocess.PIPE)
