@@ -250,4 +250,4 @@ class Mp4DecryptDecryptor(PostProcessor):
             info['__files_to_merge'][idx] = tmppath
             to_delete.append(filepath)
         else:
-            os.rename(tmppath, filepath)
+            os.replace(tmppath, filepath)
