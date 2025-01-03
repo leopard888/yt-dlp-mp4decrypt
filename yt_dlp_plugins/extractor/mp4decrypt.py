@@ -87,7 +87,7 @@ class Channel5IE(InfoExtractor):
 
     def _real_extract(self, url):
         show, season, episode = self._match_valid_url(url).group('show', 'season', 'id')
-        data_url_base = 'https://corona.channel5.com/shows/{show}/seasons/{season}'
+        data_url_base = f'https://corona.channel5.com/shows/{show}/seasons/{season}'
 
         if not episode:
             season_data = self._download_json(
