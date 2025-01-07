@@ -216,10 +216,22 @@ class Mp4DecryptDecryptor(PostProcessor):
 
     def _decrypt_part(self, info, part, to_delete):
         filepath = part['filepath']
+        tmppath = prepend_extension(filepath, 'decrypted')
+
+        if not os.path.exists(tmppath):
+            self._run_mp4decrypt(filepath, tmppath, part['_mp4decrypt'])
+
+        if filepath in info.get('__files_to_merge', []):
+            idx = info['__files_to_merge'].index(filepath)
+            info['__files_to_merge'][idx] = tmppath
+            to_delete.append(filepath)
+        else:
+            os.replace(tmppath, filepath)
+
+    def _run_mp4decrypt(self, filepath, tmppath, keys):
         cwd = os.path.dirname(filepath)
         filename = os.path.basename(filepath)
-        tmpname = prepend_extension(filename, 'decrypted')
-        tmppath = os.path.join(cwd, tmpname)
+        tmpname = os.path.basename(tmppath)
         renames = {}
 
         if os.name == 'nt':
@@ -227,14 +239,14 @@ class Mp4DecryptDecryptor(PostProcessor):
             safe_filename = re.sub(r'[^\x20-\x7E]+', '', filename)
 
             if safe_filename != filename:
-                os.rename(os.path.join(cwd, filename), os.path.join(cwd, safe_filename))
+                os.rename(filepath, os.path.join(cwd, safe_filename))
                 renames[safe_filename] = filename
                 filename = safe_filename
                 safe_tmpname = prepend_extension(safe_filename, 'decrypted')
                 renames[safe_tmpname] = tmpname
                 tmpname = safe_tmpname
 
-        cmd = ('mp4decrypt', *part['_mp4decrypt'], filename, tmpname)
+        cmd = ('mp4decrypt', *keys, filename, tmpname)
         _, stderr, returncode = Popen.run(
             cmd, cwd=cwd or None, text=True,
             stdout=subprocess.PIPE, stderr=subprocess.PIPE, stdin=subprocess.PIPE)
@@ -244,10 +256,3 @@ class Mp4DecryptDecryptor(PostProcessor):
 
         for from_name, to_name in renames.items():
             os.replace(os.path.join(cwd, from_name), os.path.join(cwd, to_name))
-
-        if filepath in info.get('__files_to_merge', []):
-            idx = info['__files_to_merge'].index(filepath)
-            info['__files_to_merge'][idx] = tmppath
-            to_delete.append(filepath)
-        else:
-            os.replace(tmppath, filepath)

@@ -271,8 +271,9 @@ class MytvSuperIE(InfoExtractor):
             session = self._download_json(
                 'https://www.mytvsuper.com/api/auth/getSession/self/', video_id)
 
-            if token := traverse_obj(session, ('user', 'token')):
+            if not session.get('error') and (token := traverse_obj(session, ('user', 'token'))):
                 self.cache.store('mytvsuper', 'token', token)
+                return token
 
         return self.cache.load('mytvsuper', 'token') or self._ANON_TOKEN
 
