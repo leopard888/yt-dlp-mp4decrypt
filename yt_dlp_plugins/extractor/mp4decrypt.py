@@ -93,15 +93,13 @@ class Channel5IE(InfoExtractor):
             season_data = self._download_json(
                 f'{data_url_base}/episodes.json?platform=my5desktop', episode)
 
-            def get_entries():
-                for episode in season_data['episodes']:
-                    yield self._get_episode(episode)
-
             return {
                 '_type': 'playlist',
                 'id': season,
                 'title': traverse_obj(season_data, ('episodes', 0, 'sh_title')),
-                'entries': get_entries(),
+                'entries': InAdvancePagedList(
+                    lambda idx: (yield self._get_episode(season_data['episodes'][idx])),
+                    len(season_data['episodes']), 1),
             }
 
         return self._get_episode(self._download_json(
@@ -122,8 +120,7 @@ class Channel5IE(InfoExtractor):
         }
 
         media = self._download_json(
-            '%s/my5firetv/%s.json' % (self._API_BASE, data['id']),
-            data['id'])
+            '%s/my5firetv/%s.json' % (self._API_BASE, data['id']), data['id'])
 
         if asset := traverse_obj(media, ('assets', 0)):
             formats = []
@@ -176,18 +173,16 @@ class ITVXIE(InfoExtractor):
             return self._get_episode(props['episode'], video_id)
 
         if programme := props.get('programme'):
-
-            def get_entries():
-                for series in props['seriesList']:
-                    for episode in series['titles']:
-                        yield self._get_episode(episode, video_id)
+            episodes = [ep for series in props['seriesList'] for ep in series['titles']]
 
             return {
                 '_type': 'playlist',
                 'id': video_id,
                 'title': programme['title'],
                 'description': programme['longDescription'],
-                'entries': get_entries(),
+                'entries': InAdvancePagedList(
+                    lambda idx: (yield self._get_episode(episodes[idx], video_id)),
+                    len(episodes), 1),
             }
 
     def _get_episode(self, episode, video_id):
@@ -364,7 +359,10 @@ class MytvSuperPlaylistIE(MytvSuperIE):
             'thumbnails': [{'id': size, 'url': programme['image'][size]} for size in programme['image']],
             **self._get_programme_info(programme, lang),
             'entries': InAdvancePagedList(
-                lambda idx: (yield self._get_episode(programme, episodes['items'][idx], lang)),
+                lambda idx: (yield {
+                    **self._get_episode(programme, episodes['items'][idx], lang),
+                    'ie_key': 'MytvSuper',
+                }),
                 len(episodes['items']), 1),
         }
 
@@ -425,7 +423,7 @@ class TVNZIE(InfoExtractor):
         if video['type'] == 'showVideo':
             return {
                 '_type': 'url_transparent',
-                'id': video['videoId'],
+                'id': video['publisherMetadata']['brightcoveVideoId'],
                 'url': self.BRIGHTCOVE_URL_TEMPLATE % (
                     video['publisherMetadata']['brightcoveAccountId'],
                     video['publisherMetadata']['brightcovePlayerId'],
@@ -438,12 +436,13 @@ class TVNZIE(InfoExtractor):
                     'season_number': ('seasonNumber', {int_or_none}),
                     'episode_number': ('episodeNumber', {int_or_none}),
                 }),
+                'ie_key': 'BrightcoveNew',
             }
 
         if video['type'] == 'sportVideo':
             return {
                 '_type': 'url_transparent',
-                'id': video['videoId'],
+                'id': video['media']['id'],
                 'url': self.BRIGHTCOVE_URL_TEMPLATE % (
                     video['media']['accountId'], 'default', video['media']['id']),
                 **traverse_obj(video, {
@@ -454,12 +453,13 @@ class TVNZIE(InfoExtractor):
                     'series': ('title'),
                     'episode': ('phase'),
                 }),
+                'ie_key': 'BrightcoveNew',
             }
 
         if video['type'] == 'newsVideo':
             return {
                 '_type': 'url_transparent',
-                'id': video['videoId'],
+                'id': video['media']['id'],
                 'url': self.BRIGHTCOVE_URL_TEMPLATE % (
                     video['media']['accountId'], 'default', video['media']['id']),
                 **traverse_obj(video, {
@@ -467,6 +467,7 @@ class TVNZIE(InfoExtractor):
                     'description': ('description'),
                     'thumbnails': ('images', ..., {'url': ('src')}),
                 }),
+                'ie_key': 'BrightcoveNew',
             }
 
 
@@ -489,7 +490,7 @@ class UIE(InfoExtractor):
 
         return {
             '_type': 'url_transparent',
-            'id': video_id,
+            'id': episode['video_id'],
             'title': episode['brand_name'] + ' - ' + title,
             'url': self.BRIGHTCOVE_URL_TEMPLATE % episode['video_id'],
             **traverse_obj(episode, {
@@ -523,10 +524,6 @@ class ViuTVIE(InfoExtractor):
 
             raise ExtractorError('Content not found')
 
-        def get_entries():
-            for episode in programme_data['episodes']:
-                yield self._get_episode(episode)
-
         return {
             '_type': 'playlist',
             'id': programme_slug,
@@ -537,7 +534,9 @@ class ViuTVIE(InfoExtractor):
                 'genres': ('genres', ..., 'name'),
                 'thumbnail': 'avatar',
             }),
-            'entries': get_entries(),
+            'entries': InAdvancePagedList(
+                lambda idx: (yield self._get_episode(programme_data['episodes'][idx])),
+                len(programme_data['episodes']), 1),
         }
 
     def _get_formats(self, product_id):
