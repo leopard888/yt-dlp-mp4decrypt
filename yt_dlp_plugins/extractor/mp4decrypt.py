@@ -59,6 +59,7 @@ class Channel4IE(InfoExtractor):
         return {
             'id': video_id,
             'formats': formats,
+            'chapters': self._get_chapters(content),
             **traverse_obj(content, {
                 'title': 'episodeTitle',
                 'duration': 'duration',
@@ -69,6 +70,33 @@ class Channel4IE(InfoExtractor):
             }),
             '_license_callback': license_callback,
         }
+
+    def _get_chapters(self, content):
+        chapters = []
+
+        if traverse_obj(content, ('skipIntro', 'skip')):
+            intro = traverse_obj(
+                content, ('skipIntro', {'start_time': 'skipStart', 'end_time': 'skipEnd'}))
+            chapters.append({**intro, 'title': 'Intro'})
+            chapters.append({'start_time': intro['end_time']})
+
+        if traverse_obj(content, ('endCredits', 'squeeze')):
+            chapters.append({
+                'start_time': content['endCredits']['squeezeIn'],
+                'title': 'End Credits',
+            })
+
+        for start_time in traverse_obj(content, ('adverts', 'breaks', ..., 'breakOffset')):
+            if start_time not in traverse_obj(chapters, (..., 'start_time')):
+                chapters.append({'start_time': start_time})
+
+        chapters.sort(key=lambda x: x['start_time'])
+
+        return traverse_obj(chapters, (..., {
+            'start_time': ('start_time', {lambda x: x / 1000 if x else x}),
+            'end_time': ('end_time', {lambda x: x / 1000 if x else x}),
+            'title': 'title',
+        }))
 
 
 class Channel4SeriesIE(InfoExtractor):
