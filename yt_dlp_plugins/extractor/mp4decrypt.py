@@ -11,6 +11,7 @@ from yt_dlp.utils import (
     ExtractorError,
     InAdvancePagedList,
     int_or_none,
+    js_to_json,
     parse_duration,
     traverse_obj,
     variadic,
@@ -64,9 +65,34 @@ class Channel4IE(InfoExtractor):
                 'age_limit': 'rating',
                 'description': 'description',
                 'series': 'brandTitle',
-                'subtitles': {'eng': ('subtitlesAssets', ..., {'url': ('url')})},
+                'subtitles': {'eng': ('subtitlesAssets', ..., {'url': 'url'})},
             }),
             '_license_callback': license_callback,
+        }
+
+
+class Channel4SeriesIE(InfoExtractor):
+    _VALID_URL = r'https://www\.channel4\.com/programmes/(?P<id>[a-z0-9\-]+)(?:\?|$)'
+
+    def _real_extract(self, url):
+        programme_id = self._match_id(url)
+        webpage = self._download_webpage(url, programme_id)
+        json_data = self._search_json(
+            r'window\.__PARAMS__\s*=', webpage, 'json_data', programme_id,
+            transform_source=js_to_json, end_pattern='</script>')
+        episodes = traverse_obj(json_data, ('initialData', 'brand', 'episodes', ..., 'hrefLink'))
+
+        return {
+            '_type': 'playlist',
+            'id': programme_id,
+            **traverse_obj(json_data, ('initialData', 'brand', {
+                'title': 'title',
+                'description': 'summary',
+                'thumbnail': ('images', 'hero', 'landscape', 'src'),
+            })),
+            'entries': InAdvancePagedList(
+                lambda idx: (yield self.url_result('https://www.channel4.com' + episodes[idx])),
+                len(episodes), 1),
         }
 
 
@@ -238,7 +264,7 @@ class ITVXIE(InfoExtractor):
                         'formats': self._extract_mpd_formats(
                             data['Playlist']['Video']['Base'] + file['Href'], video_id),
                         'subtitles': {'eng': traverse_obj(
-                            data, ('Playlist', 'Video', 'Subtitles', ..., {'url': ('Href')}))},
+                            data, ('Playlist', 'Video', 'Subtitles', ..., {'url': 'Href'}))},
                         '_license_url': file['KeyServiceUrl'],
                     })
 
@@ -349,6 +375,7 @@ class MytvSuperPlaylistIE(MytvSuperIE):
                 'programme_id': programme_id,
                 'start_episode_no': 1,
                 'end_episode_no': programme['latest_episode_no'],
+                'sort_desc': 'true',
             })
 
         return {
@@ -446,12 +473,12 @@ class TVNZIE(InfoExtractor):
                 'url': self.BRIGHTCOVE_URL_TEMPLATE % (
                     video['media']['accountId'], 'default', video['media']['id']),
                 **traverse_obj(video, {
-                    'title': ('phase'),
-                    'alt_title': ('subtext'),
-                    'description': ('description'),
-                    'thumbnails': ('images', ..., {'url': ('src')}),
-                    'series': ('title'),
-                    'episode': ('phase'),
+                    'title': 'phase',
+                    'alt_title': 'subtext',
+                    'description': 'description',
+                    'thumbnails': ('images', ..., {'url': 'src'}),
+                    'series': 'title',
+                    'episode': 'phase',
                 }),
                 'ie_key': 'BrightcoveNew',
             }
@@ -463,9 +490,9 @@ class TVNZIE(InfoExtractor):
                 'url': self.BRIGHTCOVE_URL_TEMPLATE % (
                     video['media']['accountId'], 'default', video['media']['id']),
                 **traverse_obj(video, {
-                    'title': ('title'),
-                    'description': ('description'),
-                    'thumbnails': ('images', ..., {'url': ('src')}),
+                    'title': 'title',
+                    'description': 'description',
+                    'thumbnails': ('images', ..., {'url': 'src'}),
                 }),
                 'ie_key': 'BrightcoveNew',
             }
