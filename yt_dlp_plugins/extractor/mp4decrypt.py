@@ -108,7 +108,8 @@ class Channel4SeriesIE(InfoExtractor):
         json_data = self._search_json(
             r'window\.__PARAMS__\s*=', webpage, 'json_data', programme_id,
             transform_source=js_to_json, end_pattern='</script>')
-        episodes = traverse_obj(json_data, ('initialData', 'brand', 'episodes', ..., 'hrefLink'))
+        episodes = traverse_obj(json_data, ('initialData', 'brand', 'episodes',
+            lambda _, v: 'assetId' in v, 'hrefLink'))
 
         return {
             '_type': 'playlist',
