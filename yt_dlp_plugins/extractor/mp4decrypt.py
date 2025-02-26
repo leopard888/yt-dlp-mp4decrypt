@@ -108,8 +108,8 @@ class Channel4SeriesIE(InfoExtractor):
         json_data = self._search_json(
             r'window\.__PARAMS__\s*=', webpage, 'json_data', programme_id,
             transform_source=js_to_json, end_pattern='</script>')
-        episodes = traverse_obj(json_data, ('initialData', 'brand', 'episodes',
-            lambda _, v: 'assetId' in v, 'hrefLink'))
+        episodes = traverse_obj(json_data, (
+            'initialData', 'brand', 'episodes', lambda _, v: 'assetId' in v, 'hrefLink'))
 
         return {
             '_type': 'playlist',
@@ -273,15 +273,16 @@ class ITVXIE(InfoExtractor):
 
         info_dict = {
             **traverse_obj(episode, {
-                'id': ('encodedEpisodeId', 'letterA', any),
+                'id': ((('encodedEpisodeId', 'letterA'), 'episodeId'), any),
                 'title': (('episodeTitle', 'heroCtaLabel'), any),
                 'description': (('synopsis', 'longDescription'), any),
                 'release_year': 'productionYear',
                 'series_number': 'series',
                 'episode_number': 'episode',
+                'thumbnail': (('image', 'imageUrl'), any, {lambda i: i.format(
+                    width=1920, height=1080, quality=100, blur=0, bg='false', image_format='jpg')}),
             }),
             'duration': parse_duration(traverse_obj(data, ('Playlist', 'Video', 'Duration'))),
-            'thumbnail': episode['image'].format(width=1920, height=1080, quality=100, blur=0, bg='false'),
         }
 
         if files := traverse_obj(data, ('Playlist', 'Video', 'MediaFiles')):
@@ -294,10 +295,30 @@ class ITVXIE(InfoExtractor):
                             data['Playlist']['Video']['Base'] + file['Href'], video_id),
                         'subtitles': {'eng': traverse_obj(
                             data, ('Playlist', 'Video', 'Subtitles', ..., {'url': 'Href'}))},
+                        'chapters': self._get_chapters(data),
                         '_license_url': file['KeyServiceUrl'],
                     })
 
         return info_dict
+
+    def _get_chapters(self, data):
+        chapters = traverse_obj(data, (
+            'Playlist', 'Video', 'Timecodes',
+            {'Opening Titles': 'OpeningTitles', 'End Credits': 'EndCredits'},
+            {dict.items}, ...,
+            {
+                'start_time': (1, 'StartTime', {parse_duration}),
+                'end_time': (1, 'EndTime', {parse_duration}),
+                'title': 0,
+            },
+        ))
+
+        for start_time in traverse_obj(data, ('Playlist', 'ContentBreaks', ..., 'TimeCode', {parse_duration})):
+            if start_time not in traverse_obj(chapters, (..., 'start_time')):
+                chapters.append({'start_time': start_time})
+
+        chapters.sort(key=lambda x: x['start_time'])
+        return chapters
 
 
 class MytvSuperIE(InfoExtractor):
@@ -379,13 +400,13 @@ class MytvSuperIE(InfoExtractor):
 
     def _get_programme_info(self, programme, lang):
         def tag_filter(types):
-            return lambda tags: [t for t in tags if t['type'] in variadic(types)]
+            return lambda _, t: t['type'] in variadic(types)
 
         return traverse_obj(programme, {
-            'release_year': ('tags', {tag_filter('prod_year')}, 0, 'name_en', {int_or_none}),
-            'location': ('tags', {tag_filter('country_of_origin')}, 0, 'name_' + lang),
+            'release_year': ('tags', tag_filter('prod_year'), 'name_en', any, {int_or_none}),
+            'location': ('tags', tag_filter('country_of_origin'), 'name_' + lang, any),
             'age_limit': ('parental_lock', {lambda x: 18 if x else None}),
-            'categories': ('tags', {tag_filter(('main_cat', 'category', 'sub_category'))}, ..., 'name_' + lang),
+            'categories': ('tags', tag_filter(('main_cat', 'category', 'sub_category')), 'name_' + lang),
             'cast': ('artists', ..., 'name_' + lang),
         })
 
