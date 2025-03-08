@@ -13,6 +13,7 @@ from yt_dlp.utils import (
     int_or_none,
     js_to_json,
     parse_duration,
+    parse_iso8601,
     traverse_obj,
     variadic,
 )
@@ -170,6 +171,7 @@ class Channel5IE(InfoExtractor):
                 'series_number': ('sea_num', {int_or_none}),
                 'episode_number': ('ep_num', {int_or_none}),
                 'genres': ('genre',),
+                'timestamp': 'vod_s',
             }),
             'age_limit': self._GUIDANCE.get(data['rat']),
         }
@@ -281,6 +283,7 @@ class ITVXIE(InfoExtractor):
                 'episode_number': 'episode',
                 'thumbnail': (('image', 'imageUrl'), any, {lambda i: i.format(
                     width=1920, height=1080, quality=100, blur=0, bg='false', image_format='jpg')}),
+                'timestamp': ('broadcastDateTime', {parse_iso8601}),
             }),
             'duration': parse_duration(traverse_obj(data, ('Playlist', 'Video', 'Duration'))),
         }
@@ -408,6 +411,7 @@ class MytvSuperIE(InfoExtractor):
             'age_limit': ('parental_lock', {lambda x: 18 if x else None}),
             'categories': ('tags', tag_filter(('main_cat', 'category', 'sub_category')), 'name_' + lang),
             'cast': ('artists', ..., 'name_' + lang),
+            'timestamp': ('start_time', {parse_iso8601}),
         })
 
 
@@ -512,6 +516,7 @@ class TVNZIE(InfoExtractor):
                     'series': 'title',
                     'season_number': ('seasonNumber', {int_or_none}),
                     'episode_number': ('episodeNumber', {int_or_none}),
+                    'timestamp': ('onTime', {parse_iso8601}),
                 }),
                 'ie_key': 'BrightcoveNew',
             }
@@ -529,6 +534,7 @@ class TVNZIE(InfoExtractor):
                     'thumbnails': ('images', ..., {'url': 'src'}),
                     'series': 'title',
                     'episode': 'phase',
+                    'timestamp': ('onTime', {parse_iso8601}),
                 }),
                 'ie_key': 'BrightcoveNew',
             }
@@ -543,6 +549,7 @@ class TVNZIE(InfoExtractor):
                     'title': 'title',
                     'description': 'description',
                     'thumbnails': ('images', ..., {'url': 'src'}),
+                    'timestamp': ('onTime', {parse_iso8601}),
                 }),
                 'ie_key': 'BrightcoveNew',
             }
@@ -649,6 +656,7 @@ class ViuTVIE(InfoExtractor):
                 'series': 'program_title',
                 'episode': 'episodeNameU3',
                 'episode_number': 'episodeNum',
+                'timestamp': ('onAirStartDate', {int_or_none(scale=1000)}),
             }),
             'formats': formats,
             'subtitles': subtitles,
