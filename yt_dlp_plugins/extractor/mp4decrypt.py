@@ -243,6 +243,11 @@ class ITVXIE(InfoExtractor):
             }
 
     def _get_episode(self, episode, video_id):
+        featureset = ['mpeg-dash', 'widevine', 'outband-webvtt']
+
+        if 'INBAND_AUDIO_DESCRIPTION' in episode.get('availabilityFeatures', []):
+            featureset.append('inband-audio-description')
+
         data = self._download_json(
             episode['playlistUrl'], video_id,
             data=json.dumps({
@@ -262,8 +267,8 @@ class ITVXIE(InfoExtractor):
                 },
                 'variantAvailability': {
                     'featureset': {
-                        'min': ['mpeg-dash', 'widevine', 'outband-webvtt'],
-                        'max': ['mpeg-dash', 'widevine', 'outband-webvtt'],
+                        'min': featureset,
+                        'max': featureset,
                     },
                     'platformTag': 'dotcom',
                 },
@@ -601,10 +606,11 @@ class ViuTVIE(InfoExtractor):
         programme_data = self._download_json(
             f'https://api.viu.tv/production/programmes/{programme_slug}', programme_slug)['programme']
 
+        episodes = traverse_obj(programme_data, ((('episodes', ...), ('clips', ...)), all))
+
         if video_slug:
-            for vtype in ('episodes', 'clips'):
-                if episode := next((ep for ep in programme_data[vtype] if ep['slug'] == video_slug), None):
-                    return self._get_episode(episode)
+            if episode := traverse_obj(episodes, (lambda _, ep: ep['slug'] == video_slug, any)):
+                return self._get_episode(episode)
 
             raise ExtractorError('Content not found')
 
@@ -619,8 +625,7 @@ class ViuTVIE(InfoExtractor):
                 'thumbnail': 'avatar',
             }),
             'entries': InAdvancePagedList(
-                lambda idx: (yield self._get_episode(programme_data['episodes'][idx])),
-                len(programme_data['episodes']), 1),
+                lambda idx: (yield self._get_episode(episodes[idx])), len(episodes), 1),
         }
 
     def _get_formats(self, product_id):
