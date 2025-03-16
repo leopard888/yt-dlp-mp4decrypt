@@ -298,15 +298,9 @@ class ITVXIE(InfoExtractor):
                 if '.mp4' in file['Href']:
                     info_dict['url'] = file['Href']
                 else:
-                    fmts = self._extract_mpd_formats(
-                        data['Playlist']['Video']['Base'] + file['Href'], video_id)
-
-                    for fmt in fmts:
-                        if 'audiodescription' in fmt['format_id'].lower():
-                            fmt['preference'] = -2
-
                     info_dict.update({
-                        'formats': fmts,
+                        'formats': self._extract_mpd_formats(
+                            data['Playlist']['Video']['Base'] + file['Href'], video_id),
                         'subtitles': {'eng': traverse_obj(
                             data, ('Playlist', 'Video', 'Subtitles', ..., {'url': 'Href'}))},
                         'chapters': self._get_chapters(data),

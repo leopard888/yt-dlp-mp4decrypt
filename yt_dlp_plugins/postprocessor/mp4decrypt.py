@@ -183,7 +183,22 @@ class Mp4DecryptExtractor:
                 for child in parent.findall('{*}ContentProtection'):
                     parent.remove(child)
 
-        return self._mixin_class._parse_mpd_periods(self, mpd_doc, *args, **kwargs)
+        audio_sets = mpd_doc.findall('.//{*}AdaptationSet[@contentType=\'audio\']')
+        roles = {}
+
+        for audio_set in audio_sets:
+            if (role := audio_set.find('{*}Role')) is not None:
+                for representation in audio_set.findall('{*}Representation[@id]'):
+                    roles[representation.get('id')] = role.get('value')
+
+        for period_entry in self._mixin_class._parse_mpd_periods(self, mpd_doc, *args, **kwargs):
+            for fmt in period_entry['formats']:
+                if role := roles.get(fmt['format_id']):
+                    fmt['format_note'] += f' ({role})'
+                    if role in ('description', 'alternate'):
+                        fmt['preference'] = -2
+
+            yield period_entry
 
     def _parse_brightcove_metadata(self, json_data, *args, **kwargs):
         for source in json_data.get('sources') or []:
