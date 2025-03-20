@@ -104,14 +104,14 @@ class Mp4DecryptPP(PostProcessor):
 
         if not license_callback and license_url:
 
-            def license_callback(challenge):
+            def license_callback(challenge, mpd_url):
                 self.to_screen(f'Fetching keys from {license_url}')
                 return self._downloader.urlopen(Request(
                     license_url, data=challenge,
                     headers={'Content-Type': 'application/octet-stream'})).read()
 
         if license_callback:
-            return self._fetch_keys(pssh, license_callback, cache_args)
+            return self._fetch_keys(pssh, license_callback, cache_args, mpd_url)
 
         return ()
 
@@ -137,14 +137,14 @@ class Mp4DecryptPP(PostProcessor):
         self.report_warning('Could not find PSSH for ' + part['format_id'])
         return None
 
-    def _fetch_keys(self, pssh, callback, cache_args):
+    def _fetch_keys(self, pssh, callback, cache_args, mpd_url):
         keys = ()
 
         if devicepath := self._kwargs.get('devicepath'):
             cdm = Cdm.from_device(Device.load(devicepath))
             session_id = cdm.open()
             challenge = cdm.get_license_challenge(session_id, PSSH(pssh), 'STREAMING', privacy_mode=True)
-            cdm.parse_license(session_id, callback(challenge))
+            cdm.parse_license(session_id, callback(challenge, mpd_url))
 
             for key in cdm.get_keys(session_id):
                 if key.type == 'CONTENT':

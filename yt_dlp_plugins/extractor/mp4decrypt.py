@@ -6,6 +6,7 @@ from yt_dlp.aes import aes_cbc_decrypt_bytes
 from yt_dlp.extractor.common import InfoExtractor
 from yt_dlp.extractor.sonyliv import SonyLIVIE as _SonyLIVIE
 from yt_dlp.extractor.stv import STVPlayerIE as _STVPlayerIE
+from yt_dlp.networking.common import Request
 from yt_dlp.utils import (
     NO_DEFAULT,
     ExtractorError,
@@ -39,7 +40,7 @@ class Channel4IE(InfoExtractor):
                 if profile['name'].startswith('dashwv'):
                     dashwv_stream = stream
 
-        def license_callback(challenge):
+        def license_callback(challenge, mpd_url):
             license_url, token = aes_cbc_decrypt_bytes(
                 base64.b64decode(dashwv_stream['token']),
                 b'\x6e\x39\x63\x4c\x69\x65\x59\x6b\x71\x77\x7a\x4e\x43\x71\x76\x69',
@@ -231,19 +232,42 @@ class ITVXIE(InfoExtractor):
 
         if programme := props.get('programme'):
             episodes = [ep for series in props['seriesList'] for ep in series['titles']]
+            base_url = 'https://www.itv.com/watch/%s/%s' % (programme['titleSlug'], video_id)
+
+            def get_entry(idx):
+                info_dict = self._get_info(episodes[idx])
+                yield {
+                    '_type': 'url_transparent',
+                    'url': base_url + '/' + info_dict['id'],
+                    # 'ie_key': self.ie_key(),
+                    **info_dict,
+                }
 
             return {
                 '_type': 'playlist',
                 'id': video_id,
                 'title': programme['title'],
                 'description': programme['longDescription'],
-                'entries': InAdvancePagedList(
-                    lambda idx: (yield self._get_episode(episodes[idx], video_id)),
-                    len(episodes), 1),
+                'entries': InAdvancePagedList(get_entry, len(episodes), 1),
             }
 
+    def _get_info(self, episode):
+        return {
+            **traverse_obj(episode, {
+                'id': ((('encodedEpisodeId', 'letterA'), 'episodeId'), any),
+                'title': (('episodeTitle', 'heroCtaLabel'), any),
+                'description': (('synopsis', 'longDescription'), any),
+                'release_year': 'productionYear',
+                'season_number': ('series', {int_or_none}),
+                'episode_number': ('episode', {int_or_none}),
+                'thumbnail': (('image', 'imageUrl'), any, {lambda i: i.format(
+                    width=1920, height=1080, quality=100, blur=0, bg='false', image_format='jpg')}),
+                'timestamp': ('broadcastDateTime', {parse_iso8601}),
+            }),
+        }
+
     def _get_episode(self, episode, video_id):
-        featureset = ['mpeg-dash', 'widevine', 'outband-webvtt']
+        featureset = ['mpeg-dash', 'widevine', 'outband-webvtt', 'hd', 'single-track']
 
         if 'INBAND_AUDIO_DESCRIPTION' in episode.get('availabilityFeatures', []):
             featureset.append('inband-audio-description')
@@ -266,46 +290,47 @@ class ITVXIE(InfoExtractor):
                     },
                 },
                 'variantAvailability': {
-                    'featureset': {
-                        'min': featureset,
-                        'max': featureset,
-                    },
+                    'player': 'dash',
+                    'featureset': featureset,
                     'platformTag': 'dotcom',
+                    'drm': {
+                        'system': 'widevine',
+                        'maxSupported': 'L3'
+                    },
                 },
             }).encode(),
             headers={
-                'Accept': 'application/vnd.itv.vod.playlist.v2+json',
+                'Accept': 'application/vnd.itv.vod.playlist.v4+json',
                 'Content-Type': 'application/json',
             })
 
+        license_urls = {}
+
+        def license_callback(challenge, mpd_url):
+            license_url = license_urls[mpd_url]
+            self.to_screen(f'Fetching keys from {license_url}')
+            return self._downloader.urlopen(Request(
+                license_url, data=challenge,
+                headers={'Content-Type': 'application/octet-stream'})).read()
+
         info_dict = {
-            **traverse_obj(episode, {
-                'id': ((('encodedEpisodeId', 'letterA'), 'episodeId'), any),
-                'title': (('episodeTitle', 'heroCtaLabel'), any),
-                'description': (('synopsis', 'longDescription'), any),
-                'release_year': 'productionYear',
-                'series_number': 'series',
-                'episode_number': 'episode',
-                'thumbnail': (('image', 'imageUrl'), any, {lambda i: i.format(
-                    width=1920, height=1080, quality=100, blur=0, bg='false', image_format='jpg')}),
-                'timestamp': ('broadcastDateTime', {parse_iso8601}),
-            }),
+            **self._get_info(episode),
+            'formats': [],
+            'chapters': self._get_chapters(data),
             'duration': parse_duration(traverse_obj(data, ('Playlist', 'Video', 'Duration'))),
+            '_license_callback': license_callback,
         }
 
-        if files := traverse_obj(data, ('Playlist', 'Video', 'MediaFiles')):
-            for file in files:
-                if '.mp4' in file['Href']:
-                    info_dict['url'] = file['Href']
-                else:
-                    info_dict.update({
-                        'formats': self._extract_mpd_formats(
-                            data['Playlist']['Video']['Base'] + file['Href'], video_id),
-                        'subtitles': {'eng': traverse_obj(
-                            data, ('Playlist', 'Video', 'Subtitles', ..., {'url': 'Href'}))},
-                        'chapters': self._get_chapters(data),
-                        '_license_url': file['KeyServiceUrl'],
-                    })
+        if subs := traverse_obj(data, ('Playlist', 'Video', 'Subtitles', ..., {'url': 'Href'})):
+            info_dict['subtitles'] = {'eng': subs}
+
+        for file in traverse_obj(data, ('Playlist', 'Video', 'MediaFiles')):
+            if '.mp4' in file['Href']:
+                info_dict['formats'].append({'url': file['Href']})
+            else:
+                info_dict['formats'].extend(
+                    self._extract_mpd_formats(file['Href'], video_id))
+                license_urls[file['Href']] = file['KeyServiceUrl']
 
         return info_dict
 
@@ -372,7 +397,7 @@ class MytvSuperIE(InfoExtractor):
         for profile in profiles:
             formats.extend(self._extract_mpd_formats(profile.replace('https://', 'http://'), episode_id))
 
-        def license_callback(challenge):
+        def license_callback(challenge, mpd_url):
             return self._request_webpage(
                 'https://wv.drm.tvb.com/wvproxy/mlicense', episode_id,
                 query={'contentid': data['content_id']},
@@ -494,6 +519,43 @@ class STVPlayerIE(_STVPlayerIE, plugin_name='yt-dlp-mp4decrypt'):
 
     def report_drm(self, video_id, partial=NO_DEFAULT):
         self.BRIGHTCOVE_URL_TEMPLATE = self.BRIGHTCOVE_URL_TEMPLATE.replace('1486976045', '6204867266001')
+
+
+class TVBNewsIE(InfoExtractor):
+    _VALID_URL = r'https://news\.tvb\.com/(?:[^/]+/){2}(?P<id>[0-9a-f]+)'
+    _GEO_COUNTRIES = ['HK']
+
+    def _real_extract(self, url):
+        video_id = self._match_id(url)
+        webpage = self._download_webpage(url, video_id)
+        nextjs = self._search_nextjs_data(webpage, video_id)
+        videos = traverse_obj(nextjs, ('props', 'pageProps', 'newsItems', 'media', 'video', ..., ..., 'url'))
+        license_url = traverse_obj(nextjs, ('runtimeConfig', 'playerConfig', 'wv'))
+
+        self._x_forwarded_for_ip = None
+        mpds = set()
+        formats = []
+        content_id = ''
+
+        for video in videos:
+            checkout = self._download_json(video + '?profile=chrome', video_id)
+            mpds.update(traverse_obj(checkout, ('content', 'url', ...)))
+            content_id = traverse_obj(checkout, ('content', 'content_id'))
+
+        for mpd in mpds:
+            formats.extend(self._extract_mpd_formats(mpd, video_id))
+
+        return {
+            **traverse_obj(nextjs, ('props', 'pageProps', 'newsItems', {
+                'id': 'id',
+                'title': 'title',
+                'description': 'desc',
+                'categories': 'tags',
+                'timestamp': ('publish_datetime', {parse_iso8601}),
+            })),
+            'formats': formats,
+            '_license_url': license_url + content_id,
+        }
 
 
 class TVNZIE(InfoExtractor):
