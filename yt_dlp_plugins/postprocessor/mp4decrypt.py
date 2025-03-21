@@ -13,6 +13,7 @@ from yt_dlp.utils import (
     PostProcessingError,
     YoutubeDLError,
     prepend_extension,
+    truncate_string,
     variadic,
 )
 
@@ -105,7 +106,7 @@ class Mp4DecryptPP(PostProcessor):
         if not license_callback and license_url:
 
             def license_callback(challenge, mpd_url):
-                self.to_screen(f'Fetching keys from {license_url}')
+                self.to_screen('Fetching keys from ' + truncate_string(license_url, 100, 20))
                 return self._downloader.urlopen(Request(
                     license_url, data=challenge,
                     headers={'Content-Type': 'application/octet-stream'})).read()

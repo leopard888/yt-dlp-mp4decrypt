@@ -6,7 +6,6 @@ from yt_dlp.aes import aes_cbc_decrypt_bytes
 from yt_dlp.extractor.common import InfoExtractor
 from yt_dlp.extractor.sonyliv import SonyLIVIE as _SonyLIVIE
 from yt_dlp.extractor.stv import STVPlayerIE as _STVPlayerIE
-from yt_dlp.networking.common import Request
 from yt_dlp.utils import (
     NO_DEFAULT,
     ExtractorError,
@@ -16,6 +15,7 @@ from yt_dlp.utils import (
     parse_duration,
     parse_iso8601,
     traverse_obj,
+    truncate_string,
     variadic,
 )
 
@@ -239,7 +239,7 @@ class ITVXIE(InfoExtractor):
                 yield {
                     '_type': 'url_transparent',
                     'url': base_url + '/' + info_dict['id'],
-                    # 'ie_key': self.ie_key(),
+                    'ie_key': 'ITVX',
                     **info_dict,
                 }
 
@@ -295,7 +295,7 @@ class ITVXIE(InfoExtractor):
                     'platformTag': 'dotcom',
                     'drm': {
                         'system': 'widevine',
-                        'maxSupported': 'L3'
+                        'maxSupported': 'L3',
                     },
                 },
             }).encode(),
@@ -308,10 +308,10 @@ class ITVXIE(InfoExtractor):
 
         def license_callback(challenge, mpd_url):
             license_url = license_urls[mpd_url]
-            self.to_screen(f'Fetching keys from {license_url}')
-            return self._downloader.urlopen(Request(
-                license_url, data=challenge,
-                headers={'Content-Type': 'application/octet-stream'})).read()
+            return self._request_webpage(
+                license_url, video_id, data=challenge,
+                headers={'Content-Type': 'application/octet-stream'},
+                note='Fetching keys from ' + truncate_string(license_url, 100, 20)).read()
 
         info_dict = {
             **self._get_info(episode),
@@ -324,7 +324,9 @@ class ITVXIE(InfoExtractor):
         if subs := traverse_obj(data, ('Playlist', 'Video', 'Subtitles', ..., {'url': 'Href'})):
             info_dict['subtitles'] = {'eng': subs}
 
-        for file in traverse_obj(data, ('Playlist', 'Video', 'MediaFiles')):
+        files = traverse_obj(data, ('Playlist', 'Video', 'MediaFiles', ...))
+
+        for file in sorted(files, key=lambda file: int_or_none(file.get('Resolution'))):
             if '.mp4' in file['Href']:
                 info_dict['formats'].append({'url': file['Href']})
             else:
