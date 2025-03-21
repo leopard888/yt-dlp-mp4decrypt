@@ -184,12 +184,14 @@ class Mp4DecryptExtractor:
                 for child in parent.findall('{*}ContentProtection'):
                     parent.remove(child)
 
-        audio_sets = mpd_doc.findall('.//{*}AdaptationSet[@contentType=\'audio\']')
         roles = {}
 
-        for audio_set in audio_sets:
-            if (role := audio_set.find('{*}Role')) is not None:
-                for representation in audio_set.findall('{*}Representation[@id]'):
+        for adaptation_set in mpd_doc.findall('.//{*}AdaptationSet'):
+            if adaptation_set.get('mimeType') != 'audio/mp4' and \
+                    adaptation_set.get('contentType') != 'audio':
+                continue
+            if (role := adaptation_set.find('{*}Role')) is not None:
+                for representation in adaptation_set.findall('{*}Representation[@id]'):
                     roles[representation.get('id')] = role.get('value')
 
         for period_entry in self._mixin_class._parse_mpd_periods(self, mpd_doc, *args, **kwargs):

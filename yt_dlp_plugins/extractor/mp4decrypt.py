@@ -181,14 +181,15 @@ class Channel5IE(InfoExtractor):
         }
 
         media = self._download_json(
-            '%s/my5firetv/%s.json' % (self._API_BASE, data['id']), data['id'])
+            '%s/my5firetvhydradash/%s.json' % (self._API_BASE, data['id']), data['id'])
 
         if asset := traverse_obj(media, ('assets', 0)):
             formats = []
             subtitles = {}
 
             for rendition in asset.get('renditions', []):
-                formats.extend(self._extract_mpd_formats(rendition['url'], data['id']))
+                formats.extend(self._extract_mpd_formats(
+                    rendition['url'].replace('_SD-tt', '-tt'), data['id']))
 
             if url := asset.get('subtitleurl'):
                 subtitles['eng'] = [{'url': url}]
