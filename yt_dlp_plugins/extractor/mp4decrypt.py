@@ -26,7 +26,10 @@ class Channel4IE(InfoExtractor):
 
     def _real_extract(self, url):
         video_id = self._match_id(url)
-        content = self._download_json(f'https://www.channel4.com/vod/stream/{video_id}', video_id)
+        content = self._download_json(
+            f'https://www.channel4.com/vod/stream/{video_id}', video_id,
+            headers={'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36'})
+
         formats = []
         dashwv_stream = None
 
