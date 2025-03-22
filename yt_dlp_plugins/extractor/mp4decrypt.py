@@ -15,7 +15,6 @@ from yt_dlp.utils import (
     parse_duration,
     parse_iso8601,
     traverse_obj,
-    truncate_string,
     variadic,
 )
 
@@ -43,7 +42,7 @@ class Channel4IE(InfoExtractor):
                 if profile['name'].startswith('dashwv'):
                     dashwv_stream = stream
 
-        def license_callback(challenge, mpd_url):
+        def license_callback(challenge):
             license_url, token = aes_cbc_decrypt_bytes(
                 base64.b64decode(dashwv_stream['token']),
                 b'\x6e\x39\x63\x4c\x69\x65\x59\x6b\x71\x77\x7a\x4e\x43\x71\x76\x69',
@@ -270,7 +269,7 @@ class ITVXIE(InfoExtractor):
             }),
         }
 
-    def _get_episode(self, episode, video_id):
+    def _get_formats(self, episode, video_id, platform):
         featureset = ['mpeg-dash', 'widevine', 'outband-webvtt', 'hd', 'single-track']
 
         if 'INBAND_AUDIO_DESCRIPTION' in episode.get('availabilityFeatures', []):
@@ -294,9 +293,8 @@ class ITVXIE(InfoExtractor):
                     },
                 },
                 'variantAvailability': {
-                    'player': 'dash',
                     'featureset': featureset,
-                    'platformTag': 'dotcom',
+                    **platform,
                     'drm': {
                         'system': 'widevine',
                         'maxSupported': 'L3',
@@ -308,35 +306,50 @@ class ITVXIE(InfoExtractor):
                 'Content-Type': 'application/json',
             })
 
-        license_urls = {}
+        return {
+            **traverse_obj(data, ('Playlist', 'Video', {
+                'duration': ('Duration', {parse_duration}),
+                'subtitles': ('Subtitles', ..., {'url': 'Href'}),
+                'files': ('MediaFiles', ..., {
+                    'url': 'Href',
+                    'license_url': 'KeyServiceUrl',
+                    'resolution': ('Resolution', {int_or_none(default=0)}),
+                }),
+            })),
+            'chapters': self._get_chapters(data),
+        }
 
-        def license_callback(challenge, mpd_url):
-            license_url = license_urls[mpd_url]
-            return self._request_webpage(
-                license_url, video_id, data=challenge,
-                headers={'Content-Type': 'application/octet-stream'},
-                note='Fetching keys from ' + truncate_string(license_url, 100, 20)).read()
+    def _get_episode(self, episode, video_id):
+        hd_data = self._get_formats(episode, video_id, {'platformTag': 'ctv'})
+        sd_data = self._get_formats(episode, video_id, {'player': 'dash', 'platformTag': 'dotcom'})
+        resolutions = {}
 
         info_dict = {
             **self._get_info(episode),
             'formats': [],
-            'chapters': self._get_chapters(data),
-            'duration': parse_duration(traverse_obj(data, ('Playlist', 'Video', 'Duration'))),
-            '_license_callback': license_callback,
+            'subtitles': {},
+            'chapters': hd_data['chapters'],
+            'duration': hd_data['duration'],
+            '_license_url': {},
         }
 
-        if subs := traverse_obj(data, ('Playlist', 'Video', 'Subtitles', ..., {'url': 'Href'})):
-            info_dict['subtitles'] = {'eng': subs}
+        for data in (hd_data, sd_data):
+            if 'subtitles' in data:
+                self._merge_subtitles({'eng': data['subtitles']}, target=info_dict['subtitles'])
 
-        files = traverse_obj(data, ('Playlist', 'Video', 'MediaFiles', ...))
+            for file in sorted(data['files'], key=lambda file: file['resolution']):
+                resolutions[file['resolution']] = file['url']
+                if 'license_url' in file:
+                    info_dict['_license_url'][file['url']] = file['license_url']
 
-        for file in sorted(files, key=lambda file: int_or_none(file.get('Resolution'))):
-            if '.mp4' in file['Href']:
-                info_dict['formats'].append({'url': file['Href']})
+        if 720 in resolutions and 1080 in resolutions:
+            del resolutions[720]
+
+        for _, url in resolutions.items():
+            if '.mp4' in url:
+                info_dict['formats'].append({'url': url})
             else:
-                info_dict['formats'].extend(
-                    self._extract_mpd_formats(file['Href'], video_id))
-                license_urls[file['Href']] = file['KeyServiceUrl']
+                info_dict['formats'].extend(self._extract_mpd_formats(url, video_id))
 
         return info_dict
 
@@ -403,7 +416,7 @@ class MytvSuperIE(InfoExtractor):
         for profile in profiles:
             formats.extend(self._extract_mpd_formats(profile.replace('https://', 'http://'), episode_id))
 
-        def license_callback(challenge, mpd_url):
+        def license_callback(challenge):
             return self._request_webpage(
                 'https://wv.drm.tvb.com/wvproxy/mlicense', episode_id,
                 query={'contentid': data['content_id']},
