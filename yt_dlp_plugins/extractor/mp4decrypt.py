@@ -6,12 +6,14 @@ from yt_dlp.aes import aes_cbc_decrypt_bytes
 from yt_dlp.extractor.common import InfoExtractor
 from yt_dlp.extractor.sonyliv import SonyLIVIE as _SonyLIVIE
 from yt_dlp.extractor.stv import STVPlayerIE as _STVPlayerIE
+from yt_dlp.networking import HEADRequest
 from yt_dlp.utils import (
     NO_DEFAULT,
     ExtractorError,
     InAdvancePagedList,
     int_or_none,
     js_to_json,
+    orderedSet,
     parse_duration,
     parse_iso8601,
     traverse_obj,
@@ -112,8 +114,6 @@ class Channel4SeriesIE(InfoExtractor):
         json_data = self._search_json(
             r'window\.__PARAMS__\s*=', webpage, 'json_data', programme_id,
             transform_source=js_to_json, end_pattern='</script>')
-        episodes = traverse_obj(json_data, (
-            'initialData', 'brand', 'episodes', lambda _, v: 'assetId' in v, 'hrefLink'))
 
         return {
             '_type': 'playlist',
@@ -122,10 +122,10 @@ class Channel4SeriesIE(InfoExtractor):
                 'title': 'title',
                 'description': 'summary',
                 'thumbnail': ('images', 'hero', 'landscape', 'src'),
+                'entries': (
+                    'episodes', lambda _, v: 'assetId' in v, 'hrefLink',
+                    {lambda ep: self.url_result('https://www.channel4.com' + ep)}),
             })),
-            'entries': InAdvancePagedList(
-                lambda idx: (yield self.url_result('https://www.channel4.com' + episodes[idx])),
-                len(episodes), 1),
         }
 
 
@@ -234,24 +234,20 @@ class ITVXIE(InfoExtractor):
             return self._get_episode(props['episode'], video_id)
 
         if programme := props.get('programme'):
-            episodes = [ep for series in props['seriesList'] for ep in series['titles']]
+            episodes = orderedSet([self._get_info(ep) for series in props['seriesList'] for ep in series['titles']])
             base_url = 'https://www.itv.com/watch/%s/%s' % (programme['titleSlug'], video_id)
-
-            def get_entry(idx):
-                info_dict = self._get_info(episodes[idx])
-                yield {
-                    '_type': 'url_transparent',
-                    'url': base_url + '/' + info_dict['id'],
-                    'ie_key': 'ITVX',
-                    **info_dict,
-                }
 
             return {
                 '_type': 'playlist',
                 'id': video_id,
                 'title': programme['title'],
                 'description': programme['longDescription'],
-                'entries': InAdvancePagedList(get_entry, len(episodes), 1),
+                'entries': [{
+                    '_type': 'url_transparent',
+                    'url': base_url + '/' + info_dict['id'],
+                    'ie_key': 'ITVX',
+                    **info_dict,
+                } for info_dict in episodes],
             }
 
     def _get_info(self, episode):
@@ -306,23 +302,24 @@ class ITVXIE(InfoExtractor):
                 'Content-Type': 'application/json',
             })
 
+        files = traverse_obj(data, ('Playlist', 'Video', 'MediaFiles', ..., {
+            'url': 'Href',
+            'license_url': 'KeyServiceUrl',
+            'resolution': ('Resolution', {int_or_none(default=0)}),
+        }))
+
         return {
             **traverse_obj(data, ('Playlist', 'Video', {
                 'duration': ('Duration', {parse_duration}),
                 'subtitles': ('Subtitles', ..., {'url': 'Href'}),
-                'files': ('MediaFiles', ..., {
-                    'url': 'Href',
-                    'license_url': 'KeyServiceUrl',
-                    'resolution': ('Resolution', {int_or_none(default=0)}),
-                }),
             })),
+            'files': {file['resolution']: file for file in files},
             'chapters': self._get_chapters(data),
         }
 
     def _get_episode(self, episode, video_id):
         hd_data = self._get_formats(episode, video_id, {'platformTag': 'ctv'})
         sd_data = self._get_formats(episode, video_id, {'player': 'dash', 'platformTag': 'dotcom'})
-        resolutions = {}
 
         info_dict = {
             **self._get_info(episode),
@@ -333,23 +330,22 @@ class ITVXIE(InfoExtractor):
             '_license_url': {},
         }
 
+        if 720 in hd_data['files'] and 1080 in hd_data['files']:
+            del hd_data['files'][720]
+        if 0 in hd_data['files'] and 0 in sd_data['files']:
+            del sd_data['files'][0]
+
         for data in (hd_data, sd_data):
             if 'subtitles' in data:
                 self._merge_subtitles({'eng': data['subtitles']}, target=info_dict['subtitles'])
 
-            for file in sorted(data['files'], key=lambda file: file['resolution']):
-                resolutions[file['resolution']] = file['url']
+            for _, file in data['files'].items():
+                if '.mp4' in file['url']:
+                    info_dict['formats'].append({'url': file['url']})
+                else:
+                    info_dict['formats'].extend(self._extract_mpd_formats(file['url'], video_id))
                 if 'license_url' in file:
                     info_dict['_license_url'][file['url']] = file['license_url']
-
-        if 720 in resolutions and 1080 in resolutions:
-            del resolutions[720]
-
-        for _, url in resolutions.items():
-            if '.mp4' in url:
-                info_dict['formats'].append({'url': url})
-            else:
-                info_dict['formats'].extend(self._extract_mpd_formats(url, video_id))
 
         return info_dict
 
@@ -687,7 +683,7 @@ class ViuTVIE(InfoExtractor):
         programme_data = self._download_json(
             f'https://api.viu.tv/production/programmes/{programme_slug}', programme_slug)['programme']
 
-        episodes = traverse_obj(programme_data, ((('episodes', ...), ('clips', ...)), all))
+        episodes = traverse_obj(programme_data, (('episodes', 'clips'), ...))
 
         if video_slug:
             if episode := traverse_obj(episodes, (lambda _, ep: ep['slug'] == video_slug, any)):
@@ -710,6 +706,7 @@ class ViuTVIE(InfoExtractor):
         }
 
     def _get_formats(self, product_id):
+        proxy = self.geo_verification_headers()
         vod = self._download_json(
             'https://api.viu.now.com/p8/3/getVodURL', product_id,
             data=json.dumps({
@@ -717,10 +714,13 @@ class ViuTVIE(InfoExtractor):
                 'contentType': 'Vod',
                 'deviceType': 'ANDROID_WEB',
             }).encode(),
+            headers=proxy,
         )
 
         if vod['responseCode'] == 'GEO_CHECK_FAIL':
             self.raise_geo_restricted()
+
+        self._request_webpage(HEADRequest(vod['asset'][0]), product_id, 'Touch asset', headers=proxy)
 
         if '.m3u8' in vod['asset'][0]:
             return self._extract_m3u8_formats_and_subtitles(vod['asset'][0], product_id)
