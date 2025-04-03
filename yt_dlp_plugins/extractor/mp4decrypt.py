@@ -1,4 +1,5 @@
 import base64
+import datetime
 import json
 import os
 
@@ -11,8 +12,8 @@ from yt_dlp.utils import (
     NO_DEFAULT,
     ExtractorError,
     InAdvancePagedList,
+    float_or_none,
     int_or_none,
-    js_to_json,
     orderedSet,
     parse_duration,
     parse_iso8601,
@@ -22,33 +23,49 @@ from yt_dlp.utils import (
 
 
 class Channel4IE(InfoExtractor):
-    _VALID_URL = r'https://www\.channel4\.com/programmes/[a-z0-9\-]+/on-demand/(?P<id>[a-z0-9\-]+)'
+    _VALID_URL = r'https://www\.channel4\.com/programmes/(?P<programme>[a-z0-9\-]+)(?:/on-demand/(?P<id>[a-z0-9\-]+))?'
     _GEO_COUNTRIES = ['GB']
+    _API_BASE = 'https://api.channel4.com/online'
 
     def _real_extract(self, url):
-        video_id = self._match_id(url)
+        programme_id, video_id = self._match_valid_url(url).group('programme', 'id')
+        headers = self._get_auth_headers()
+
+        if not video_id:
+            json_data = self._download_json(
+                f'{self._API_BASE}/v1/views/content-hubs/{programme_id}.json?client=amazonfire-dash',
+                programme_id, headers=headers)
+
+            return {
+                '_type': 'playlist',
+                'id': programme_id,
+                **traverse_obj(json_data, ('brand', {
+                    'title': 'title',
+                    'description': 'summary',
+                    'thumbnail': ('image', 'href', {lambda href: href.replace('{&resize}', '')}),
+                    'categories': 'categories',
+                    'entries': (
+                        'episodes', lambda _, ep: 'assetInfo' in ep, 'programmeId',
+                        {lambda ep: self.url_result(f'https://www.channel4.com/programmes/{programme_id}/on-demand/{ep}')}),
+                })),
+            }
+
+        ep_info = self._download_json(
+            f'{self._API_BASE}/v1/programmes/episode/{video_id}.json?client=amazonfire-dash',
+            video_id, headers=headers)
         content = self._download_json(
-            f'https://www.channel4.com/vod/stream/{video_id}', video_id,
-            headers={'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36'})
+            f'{self._API_BASE}/v1/vod/stream/{video_id}?client=amazonfire-dash',
+            video_id, headers=headers)
 
-        formats = []
-        dashwv_stream = None
-
-        for profile in content['videoProfiles']:
-            for stream in profile['streams']:
-                if profile['name'].startswith('hls'):
-                    formats.extend(self._extract_m3u8_formats(stream['uri'], video_id))
-                elif profile['name'].startswith('dash'):
-                    formats.extend(self._extract_mpd_formats(stream['uri'], video_id))
-
-                if profile['name'].startswith('dashwv'):
-                    dashwv_stream = stream
+        dashwv_stream = next(
+            stream for profile in content['videoProfiles']
+            for stream in profile['streams'] if 'dashwv' in profile['name'])
 
         def license_callback(challenge):
             license_url, token = aes_cbc_decrypt_bytes(
                 base64.b64decode(dashwv_stream['token']),
-                b'\x6e\x39\x63\x4c\x69\x65\x59\x6b\x71\x77\x7a\x4e\x43\x71\x76\x69',
-                b'\x6f\x64\x7a\x63\x55\x33\x57\x64\x55\x69\x58\x4c\x75\x63\x56\x64',
+                b'\x4B\x32\x43\x38\x51\x30\x39\x44\x37\x48\x4A\x33\x38\x35\x41\x42',
+                b'\x42\x33\x4C\x4B\x56\x55\x30\x35\x46\x33\x49\x44\x4C\x56\x4D\x45',
             ).decode('ascii').split('|')
 
             resp = self._download_json(
@@ -64,25 +81,51 @@ class Channel4IE(InfoExtractor):
 
         return {
             'id': video_id,
-            'formats': formats,
+            **traverse_obj(ep_info, ('episode', {
+                'title': 'title',
+                'description': 'summary',
+                'thumbnail': ('image', 'href', {lambda href: href.replace('{&resize}', '')}),
+                'series_number': ('episodeNumber', {int_or_none}),
+                'episode_number': ('seriesNumber', {int_or_none}),
+                'timestamp': ('firstTXDate', {parse_iso8601}),
+                'categories': ('brand', 'categories'),
+            })),
+            'formats': self._extract_mpd_formats(dashwv_stream['uri'], video_id),
             'chapters': self._get_chapters(content),
             **traverse_obj(content, {
-                'title': 'episodeTitle',
                 'duration': 'duration',
                 'age_limit': 'rating',
-                'description': 'description',
                 'series': 'brandTitle',
                 'subtitles': {'eng': ('subtitlesAssets', ..., {'url': 'url'})},
             }),
             '_license_callback': license_callback,
         }
 
+    def _get_auth_headers(self):
+        token = self.cache.load(self.IE_NAME, 'token') or {}
+        issued_at = int_or_none(token.get('issuedAt'), default=0, scale=1000)
+        expires_in = int_or_none(token.get('expiresIn'), default=0)
+
+        if issued_at + expires_in < datetime.datetime.now().timestamp() + 5:
+            token = self._download_json(
+                f'{self._API_BASE}/v2/auth/token?client=amazonfire-dash',
+                None, 'Downloading access token',
+                data=b'grant_type=client_credentials',
+                headers={
+                    'content-type': 'application/x-www-form-urlencoded',
+                    'authorization': 'Basic eUExTHB6dGtHZUhaRDZuU2E3QzFBQUY2dkhwelZOblU6UXFFbUVnVVVVT1hUa3piNg==',
+                })
+
+            self.cache.store(self.IE_NAME, 'token', token)
+
+        return {'authorization': 'Bearer ' + token.get('accessToken')}
+
     def _get_chapters(self, content):
         chapters = []
 
         if traverse_obj(content, ('skipIntro', 'skip')):
-            intro = traverse_obj(
-                content, ('skipIntro', {'start_time': 'skipStart', 'end_time': 'skipEnd'}))
+            intro = traverse_obj(content, ('skipIntro', {
+                'start_time': 'skipStart', 'end_time': 'skipEnd'}))
             chapters.append({**intro, 'title': 'Intro'})
             chapters.append({'start_time': intro['end_time']})
 
@@ -99,34 +142,10 @@ class Channel4IE(InfoExtractor):
         chapters.sort(key=lambda x: x['start_time'])
 
         return traverse_obj(chapters, (..., {
-            'start_time': ('start_time', {lambda x: x / 1000 if x else x}),
-            'end_time': ('end_time', {lambda x: x / 1000 if x else x}),
+            'start_time': ('start_time', {float_or_none(scale=1000)}),
+            'end_time': ('end_time', {float_or_none(scale=1000)}),
             'title': 'title',
         }))
-
-
-class Channel4SeriesIE(InfoExtractor):
-    _VALID_URL = r'https://www\.channel4\.com/programmes/(?P<id>[a-z0-9\-]+)(?:\?|$)'
-
-    def _real_extract(self, url):
-        programme_id = self._match_id(url)
-        webpage = self._download_webpage(url, programme_id)
-        json_data = self._search_json(
-            r'window\.__PARAMS__\s*=', webpage, 'json_data', programme_id,
-            transform_source=js_to_json, end_pattern='</script>')
-
-        return {
-            '_type': 'playlist',
-            'id': programme_id,
-            **traverse_obj(json_data, ('initialData', 'brand', {
-                'title': 'title',
-                'description': 'summary',
-                'thumbnail': ('images', 'hero', 'landscape', 'src'),
-                'entries': (
-                    'episodes', lambda _, v: 'assetId' in v, 'hrefLink',
-                    {lambda ep: self.url_result('https://www.channel4.com' + ep)}),
-            })),
-        }
 
 
 class Channel5IE(InfoExtractor):
