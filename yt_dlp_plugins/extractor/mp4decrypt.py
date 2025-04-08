@@ -46,7 +46,8 @@ class Channel4IE(InfoExtractor):
                     'categories': 'categories',
                     'entries': (
                         'episodes', lambda _, ep: 'assetInfo' in ep, 'programmeId',
-                        {lambda ep: self.url_result(f'https://www.channel4.com/programmes/{programme_id}/on-demand/{ep}')}),
+                        {lambda ep: self.url_result(
+                            f'https://www.channel4.com/programmes/{programme_id}/on-demand/{ep}', ie=self)}),
                 })),
             }
 
@@ -149,7 +150,7 @@ class Channel4IE(InfoExtractor):
 
 
 class Channel5IE(InfoExtractor):
-    _VALID_URL = r'https://www\.channel5\.com/(?:show/)?(?P<show>[a-z0-9\-]+)/(?P<season>[a-z0-9\-]+)(?:/(?P<id>[a-z0-9\-]+))?'
+    _VALID_URL = r'https://www\.channel5\.com/(?:show/)?(?P<show>[a-z0-9\-]+)(?:/(?P<season>[a-z0-9\-]+)(?:/(?P<id>[a-z0-9\-]+))?)?'
     _GEO_COUNTRIES = ['GB']
     _API_BASE = 'https://cassie-auth.channel5.com/api/v2/media'
     _GUIDANCE = {
@@ -165,11 +166,37 @@ class Channel5IE(InfoExtractor):
 
     def _real_extract(self, url):
         show, season, episode = self._match_valid_url(url).group('show', 'season', 'id')
+
+        if not season:
+            data_url_base = f'https://corona.channel5.com/shows/{show}'
+            show_data = self._download_json(f'{data_url_base}.json?platform=my5desktop', show)
+
+            if show_data.get('standalone'):
+                return self._get_episode(self._download_json(
+                    f'{data_url_base}/episodes/next.json?platform=my5desktop', show))
+
+            seasons_data = self._download_json(
+                f'https://corona.channel5.com/shows/{show}/seasons.json?platform=my5desktop&friendly=1', show)
+
+            return {
+                '_type': 'playlist',
+                'id': show,
+                **traverse_obj(show_data, {
+                    'title': 'title',
+                    'description': 'm_desc',
+                }),
+                'entries': traverse_obj(seasons_data, (
+                    'seasons', ..., 'sea_f_name',
+                    {lambda season: self.url_result(
+                        f'https://www.channel5.com/show/{show}/{season}', ie=self)}
+                )),
+            }
+
         data_url_base = f'https://corona.channel5.com/shows/{show}/seasons/{season}'
 
         if not episode:
             season_data = self._download_json(
-                f'{data_url_base}/episodes.json?platform=my5desktop', episode)
+                f'{data_url_base}/episodes.json?platform=my5desktop', season)
 
             return {
                 '_type': 'playlist',
@@ -206,11 +233,13 @@ class Channel5IE(InfoExtractor):
             subtitles = {}
 
             for rendition in asset.get('renditions', []):
-                formats.extend(self._extract_mpd_formats(
-                    rendition['url'].replace('_SD-tt', '-tt'), data['id']))
+                fmts, subs = self._extract_mpd_formats_and_subtitles(
+                    rendition['url'].replace('_SD-tt', '-tt'), data['id'])
+                formats.extend(fmts)
+                self._merge_subtitles(subs, target=subtitles)
 
             if url := asset.get('subtitleurl'):
-                subtitles['eng'] = [{'url': url}]
+                self._merge_subtitles({'eng': [{'url': url}]}, target=subtitles)
 
             return {
                 **info_dict,
@@ -667,8 +696,9 @@ class UIE(InfoExtractor):
         house_number = self._search_regex(r'uktvplay://video/(\w+)/', app_link, 'house number')
 
         info = self._download_json(
-            f'https://myapi.uktvapi.co.uk/brand/?platform_type=mobile&platform_name=ios&house_number={house_number}',
-            video_id)
+            'https://myapi.uktvapi.co.uk/brand/', video_id,
+            query={'platform_type': 'mobile', 'platform_name': 'ios', 'house_number': house_number})
+
         episode = info['landing_episode']
         title = episode['name'] if not episode['hide_episode_title'] \
             else 'S%s E%d' % (episode['series_number'], episode['episode_number'])
