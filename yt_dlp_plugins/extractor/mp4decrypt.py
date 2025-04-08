@@ -180,15 +180,16 @@ class Channel5IE(InfoExtractor):
 
             return {
                 '_type': 'playlist',
-                'id': show,
                 **traverse_obj(show_data, {
+                    'id': 'id',
                     'title': 'title',
                     'description': 'm_desc',
+                    'genres': (('genre',),),
                 }),
                 'entries': traverse_obj(seasons_data, (
                     'seasons', ..., 'sea_f_name',
                     {lambda season: self.url_result(
-                        f'https://www.channel5.com/show/{show}/{season}', ie=self)}
+                        f'https://www.channel5.com/show/{show}/{season}', ie=self)},
                 )),
             }
 
@@ -200,8 +201,10 @@ class Channel5IE(InfoExtractor):
 
             return {
                 '_type': 'playlist',
-                'id': season,
-                'title': traverse_obj(season_data, ('episodes', 0, 'sh_title')),
+                **traverse_obj(season_data, ('episodes', 0, {
+                    'id': 'sh_id',
+                    'title': 'sh_title',
+                })),
                 'entries': InAdvancePagedList(
                     lambda idx: (yield self._get_episode(season_data['episodes'][idx])),
                     len(season_data['episodes']), 1),
@@ -211,27 +214,23 @@ class Channel5IE(InfoExtractor):
             f'{data_url_base}/episodes/{episode}.json?platform=my5desktop', episode))
 
     def _get_episode(self, data):
-        info_dict = {
-            **traverse_obj(data, {
-                'id': 'id',
-                'title': 'title',
-                'description': 'm_desc',
-                'series': 'sh_title',
-                'series_number': ('sea_num', {int_or_none}),
-                'episode_number': ('ep_num', {int_or_none}),
-                'genres': ('genre',),
-                'timestamp': 'vod_s',
-            }),
-            'age_limit': self._GUIDANCE.get(data['rat']),
-        }
+        info_dict = traverse_obj(data, {
+            'id': 'id',
+            'title': 'title',
+            'description': 'm_desc',
+            'series': 'sh_title',
+            'season_number': ('sea_num', {int_or_none}),
+            'episode_number': ('ep_num', {int_or_none}),
+            'genres': (('genre',),),
+            'timestamp': 'vod_s',
+            'age_limit': ('rat', {self._GUIDANCE.get}),
+        })
 
+        formats, subtitles = [], {}
         media = self._download_json(
             '%s/my5firetvhydradash/%s.json' % (self._API_BASE, data['id']), data['id'])
 
         if asset := traverse_obj(media, ('assets', 0)):
-            formats = []
-            subtitles = {}
-
             for rendition in asset.get('renditions', []):
                 fmts, subs = self._extract_mpd_formats_and_subtitles(
                     rendition['url'].replace('_SD-tt', '-tt'), data['id'])
@@ -241,15 +240,16 @@ class Channel5IE(InfoExtractor):
             if url := asset.get('subtitleurl'):
                 self._merge_subtitles({'eng': [{'url': url}]}, target=subtitles)
 
-            return {
-                **info_dict,
-                'formats': formats,
-                'subtitles': subtitles,
-                **traverse_obj(asset, {
-                    'duration': 'duration',
-                    '_license_url': 'keyserver',
-                }),
-            }
+            info_dict.update(traverse_obj(asset, {
+                'duration': 'duration',
+                '_license_url': 'keyserver',
+            }))
+
+        return {
+            **info_dict,
+            'formats': formats,
+            'subtitles': subtitles,
+        }
 
     def _add_handler(self, director):
         req = self._create_request(self._API_BASE)
