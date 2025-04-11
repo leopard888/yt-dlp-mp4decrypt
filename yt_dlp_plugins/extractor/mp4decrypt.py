@@ -1,7 +1,7 @@
 import base64
-import datetime
 import json
 import os
+import time
 
 from yt_dlp.aes import aes_cbc_decrypt_bytes
 from yt_dlp.extractor.common import InfoExtractor
@@ -14,10 +14,12 @@ from yt_dlp.utils import (
     InAdvancePagedList,
     float_or_none,
     int_or_none,
+    jwt_decode_hs256,
     orderedSet,
     parse_duration,
     parse_iso8601,
     traverse_obj,
+    urlencode_postdata,
     variadic,
 )
 
@@ -25,7 +27,9 @@ from yt_dlp.utils import (
 class Channel4IE(InfoExtractor):
     _VALID_URL = r'https://www\.channel4\.com/programmes/(?P<programme>[a-z0-9\-]+)(?:/on-demand/(?P<id>[a-z0-9\-]+))?'
     _GEO_COUNTRIES = ['GB']
+    _NETRC_MACHINE = 'channel4'
     _API_BASE = 'https://api.channel4.com/online'
+    _USERTOKEN = None
 
     def _real_extract(self, url):
         programme_id, video_id = self._match_valid_url(url).group('programme', 'id')
@@ -102,24 +106,52 @@ class Channel4IE(InfoExtractor):
             '_license_callback': license_callback,
         }
 
+    def _perform_login(self, username, password):
+        token = self.cache.load(self._NETRC_MACHINE, username) or {}
+
+        if not self._is_token_expired(token):
+            self.write_debug('Skipping logging in')
+            return
+
+        self._USERTOKEN = self._get_token(
+            {'grant_type': 'refresh_token', 'refresh_token': token.get('refreshToken')},
+            'Refreshing tokens',
+        ) if not self._is_token_expired(token, 'refreshTokenIssuedAt', 'refreshTokenExpiresIn') else self._get_token(
+            {'grant_type': 'password', 'username': username, 'password': password},
+            'Logging in', errnote='Unable to log in',
+        )
+
+        self.cache.store(self._NETRC_MACHINE, username, self._USERTOKEN)
+
     def _get_auth_headers(self):
-        token = self.cache.load(self.IE_NAME, 'token') or {}
-        issued_at = int_or_none(token.get('issuedAt'), default=0, scale=1000)
-        expires_in = int_or_none(token.get('expiresIn'), default=0)
+        username, _ = self._get_login_info()
 
-        if issued_at + expires_in < datetime.datetime.now().timestamp() + 5:
-            token = self._download_json(
-                f'{self._API_BASE}/v2/auth/token?client=amazonfire-dash',
-                None, 'Downloading access token',
-                data=b'grant_type=client_credentials',
-                headers={
-                    'content-type': 'application/x-www-form-urlencoded',
-                    'authorization': 'Basic eUExTHB6dGtHZUhaRDZuU2E3QzFBQUY2dkhwelZOblU6UXFFbUVnVVVVT1hUa3piNg==',
-                })
-
+        if username:
+            token = self._USERTOKEN or self.cache.load(self._NETRC_MACHINE, username)
+        elif token := self.cache.load(self.IE_NAME, 'token'):
+            pass
+        else:
+            token = self._get_token({'grant_type': 'client_credentials'}, 'Downloading access token')
             self.cache.store(self.IE_NAME, 'token', token)
 
         return {'authorization': 'Bearer ' + token.get('accessToken')}
+
+    def _get_token(self, data, note, **kwargs):
+        return self._download_json(
+            f'{self._API_BASE}/v2/auth/token?client=amazonfire-dash', None, note,
+            data=urlencode_postdata(data),
+            headers={
+                'content-type': 'application/x-www-form-urlencoded',
+                'authorization': 'Basic eUExTHB6dGtHZUhaRDZuU2E3QzFBQUY2dkhwelZOblU6UXFFbUVnVVVVT1hUa3piNg==',
+            },
+            **kwargs,
+        )
+
+    def _is_token_expired(self, token, at_key='issuedAt', in_key='expiresIn'):
+        issued_at = int_or_none(token.get(at_key), default=0, scale=1000)
+        expires_in = int_or_none(token.get(in_key), default=0)
+
+        return issued_at + expires_in < time.time() + 300
 
     def _get_chapters(self, content):
         chapters = []
@@ -336,6 +368,7 @@ class ITVXIE(InfoExtractor):
                         'type': 'desktop',
                     },
                 },
+                **self._get_user(video_id),
                 'variantAvailability': {
                     'featureset': featureset,
                     **platform,
@@ -366,6 +399,9 @@ class ITVXIE(InfoExtractor):
         }
 
     def _get_episode(self, episode, video_id):
+        if episode.get('premium') and not self._get_user(video_id):
+            self.raise_login_required('This video is only available for premium users')
+
         hd_data = self._get_formats(episode, video_id, {'platformTag': 'ctv'})
         sd_data = self._get_formats(episode, video_id, {'player': 'dash', 'platformTag': 'dotcom'})
 
@@ -415,6 +451,27 @@ class ITVXIE(InfoExtractor):
 
         chapters.sort(key=lambda x: x['start_time'])
         return chapters
+
+    def _get_user(self, video_id):
+        for cookie in self.cookiejar.get_cookies_for_url('https://www.itv.com'):
+            if cookie.name == 'Itv.Session' and (session := self._parse_json(cookie.value, video_id)) and \
+                    (token := traverse_obj(session, ('tokens', 'content', 'access_token'))):
+
+                if jwt_decode_hs256(token)['exp'] < time.time() + 300:
+                    response = self._download_json(
+                        'https://auth.prd.user.itv.com/token', video_id,
+                        note='Refreshing access token',
+                        query={'refresh': traverse_obj(session, ('tokens', 'content', 'refresh_token'))},
+                        headers={'accept': 'application/vnd.user.auth.v2+json'})
+
+                    if (token := response.get('access_token')):
+                        session['tokens']['content'] = response
+                        cookie.value = json.dumps(session)
+
+                if token:
+                    return {'user': {'token': token}}
+
+        return {}
 
 
 class MytvSuperIE(InfoExtractor):
