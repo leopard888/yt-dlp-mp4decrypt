@@ -116,7 +116,7 @@ class Channel4IE(InfoExtractor):
         self._USERTOKEN = self._get_token(
             {'grant_type': 'refresh_token', 'refresh_token': token.get('refreshToken')},
             'Refreshing tokens',
-        ) if not self._is_token_expired(token, 'refreshTokenIssuedAt', 'refreshTokenExpiresIn') else self._get_token(
+        ) if not self._is_token_expired(token, 'refreshTokenExpiresAt') else self._get_token(
             {'grant_type': 'password', 'username': username, 'password': password},
             'Logging in', errnote='Unable to log in',
         )
@@ -137,7 +137,7 @@ class Channel4IE(InfoExtractor):
         return {'authorization': 'Bearer ' + token.get('accessToken')}
 
     def _get_token(self, data, note, **kwargs):
-        return self._download_json(
+        token, now = self._download_json(
             f'{self._API_BASE}/v2/auth/token?client=amazonfire-dash', None, note,
             data=urlencode_postdata(data),
             headers={
@@ -145,13 +145,17 @@ class Channel4IE(InfoExtractor):
                 'authorization': 'Basic eUExTHB6dGtHZUhaRDZuU2E3QzFBQUY2dkhwelZOblU6UXFFbUVnVVVVT1hUa3piNg==',
             },
             **kwargs,
-        )
+        ), time.time()
 
-    def _is_token_expired(self, token, at_key='issuedAt', in_key='expiresIn'):
-        issued_at = int_or_none(token.get(at_key), default=0, scale=1000)
-        expires_in = int_or_none(token.get(in_key), default=0)
+        return traverse_obj(token, {
+            'accessToken': 'accessToken',
+            'refreshToken': 'refreshToken',
+            'expiresAt': ('expiresIn', {int_or_none}, {lambda t: now + t}),
+            'refreshTokenExpiresAt': ('refreshTokenExpiresIn', {int_or_none}, {lambda t: now + t}),
+        })
 
-        return issued_at + expires_in < time.time() + 300
+    def _is_token_expired(self, token, key='expiresAt'):
+        return int_or_none(token.get(key), default=0) < time.time() + 300
 
     def _get_chapters(self, content):
         chapters = []
