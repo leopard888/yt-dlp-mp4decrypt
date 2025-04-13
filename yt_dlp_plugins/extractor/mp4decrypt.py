@@ -128,7 +128,7 @@ class Channel4IE(InfoExtractor):
 
         if username:
             token = self._USERTOKEN or self.cache.load(self._NETRC_MACHINE, username)
-        elif token := self.cache.load(self.IE_NAME, 'token'):
+        elif (token := self.cache.load(self.IE_NAME, 'token')) and not self._is_token_expired(token):
             pass
         else:
             token = self._get_token({'grant_type': 'client_credentials'}, 'Downloading access token')
@@ -470,7 +470,7 @@ class ITVXIE(InfoExtractor):
 
                     if (token := response.get('access_token')):
                         session['tokens']['content'] = response
-                        cookie.value = json.dumps(session)
+                        cookie.value = json.dumps(session, separators=(',', ':'))
 
                 if token:
                     return {'user': {'token': token}}
