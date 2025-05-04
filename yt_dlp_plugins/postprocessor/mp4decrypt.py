@@ -2,6 +2,7 @@ import hashlib
 import os
 import re
 import subprocess
+import tempfile
 
 from pywidevine.cdm import Cdm
 from pywidevine.device import Device
@@ -11,7 +12,7 @@ from yt_dlp.postprocessor.common import PostProcessor
 from yt_dlp.utils import (
     Popen,
     PostProcessingError,
-    YoutubeDLError,
+    UnavailableVideoError,
     prepend_extension,
     truncate_string,
     variadic,
@@ -48,17 +49,18 @@ class Mp4DecryptPP(PostProcessor):
         self._license_urls[mpd_url] = license_url
 
     def run(self, info):
-        if 'requested_formats' in info:
-            for part in info['requested_formats']:
-                if self._is_encrypted(part):
-                    self._add_keys(info, part)
-        elif self._is_encrypted(info):
-            self._add_keys(info, info)
+        for part in info.get('requested_formats', (info,)):
+            if info.get('_m3u8_wv') and part.get('protocol') == 'm3u8_native':
+                self._license_urls[part['manifest_url']] = None
+
+            if self._is_encrypted(part):
+                self._add_keys(info, part)
 
         return [], info
 
     def _is_encrypted(self, part):
-        return part.get('container') in ('mp4_dash', 'm4a_dash') and \
+        return (part.get('container') in ('mp4_dash', 'm4a_dash')
+                or part.get('protocol') == 'm3u8_native') and \
             part.get('manifest_url') in self._license_urls
 
     def _add_keys(self, info, part):
@@ -68,7 +70,7 @@ class Mp4DecryptPP(PostProcessor):
         if keys := self._get_keys(info, part):
             part['_mp4decrypt'] = keys
         else:
-            raise YoutubeDLError('No keys found for ' + part['format_id'])
+            raise UnavailableVideoError('No keys found for ' + part['format_id'])
 
         if self._decryptor not in info.get('__postprocessors', []):
             info.setdefault('__postprocessors', [])
@@ -127,9 +129,15 @@ class Mp4DecryptPP(PostProcessor):
                 offset += size
                 yield PSSH(raw[pssh_offset:pssh_offset + size])
 
-        init_data = self._downloader.urlopen(Request(
-            part['fragment_base_url'] + part['fragments'][0]['path'],
-            headers=part['http_headers'])).read()
+        init_data = b''
+        temp_file = tempfile.NamedTemporaryFile(suffix='.tmp', delete=False)
+        temp_file.close()
+        success, _ = self._downloader.dl(temp_file.name, part, test=True)
+
+        if success:
+            with open(temp_file.name, 'rb') as f:
+                init_data = f.read()
+            os.remove(temp_file.name)
 
         for pssh in find_wv_pssh_offsets(init_data):
             if pssh.system_id == PSSH.SystemId.Widevine:

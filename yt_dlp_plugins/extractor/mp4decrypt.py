@@ -1,7 +1,9 @@
 import base64
 import json
 import os
+import re
 import time
+import uuid
 
 from yt_dlp.aes import aes_cbc_decrypt_bytes
 from yt_dlp.extractor.common import InfoExtractor
@@ -18,6 +20,7 @@ from yt_dlp.utils import (
     orderedSet,
     parse_duration,
     parse_iso8601,
+    parse_qs,
     traverse_obj,
     urlencode_postdata,
     variadic,
@@ -315,11 +318,18 @@ class ITVXIE(InfoExtractor):
         props = self._search_nextjs_data(webpage, video_id)['props']['pageProps']
 
         if 'episode' in props:
-            return self._get_episode(props['episode'], video_id)
+            return {
+                **self._get_episode(props['episode'], video_id),
+                **self._get_programme_info(props.get('programme')),
+            }
 
         if programme := props.get('programme'):
-            episodes = orderedSet([self._get_info(ep) for series in props['seriesList'] for ep in series['titles']])
             base_url = 'https://www.itv.com/watch/%s/%s' % (programme['titleSlug'], video_id)
+            programme_info = self._get_programme_info(programme)
+            episodes = orderedSet([{
+                **self._get_info(ep),
+                **programme_info,
+            } for series in props['seriesList'] for ep in series['titles']])
 
             return {
                 '_type': 'playlist',
@@ -335,19 +345,23 @@ class ITVXIE(InfoExtractor):
             }
 
     def _get_info(self, episode):
-        return {
-            **traverse_obj(episode, {
-                'id': ((('encodedEpisodeId', 'letterA'), 'episodeId'), any),
-                'title': (('episodeTitle', 'heroCtaLabel'), any),
-                'description': (('synopsis', 'longDescription'), any),
-                'release_year': 'productionYear',
-                'season_number': ('series', {int_or_none}),
-                'episode_number': ('episode', {int_or_none}),
-                'thumbnail': (('image', 'imageUrl'), any, {lambda i: i.format(
-                    width=1920, height=1080, quality=100, blur=0, bg='false', image_format='jpg')}),
-                'timestamp': ('broadcastDateTime', {parse_iso8601}),
-            }),
-        }
+        return traverse_obj(episode, {
+            'id': ((('encodedEpisodeId', 'letterA'), 'episodeId'), any),
+            'title': (('episodeTitle', 'heroCtaLabel'), any),
+            'description': (('synopsis', 'longDescription'), any),
+            'release_year': 'productionYear',
+            'season_number': ('series', {int_or_none}),
+            'episode_number': ('episode', {int_or_none}),
+            'thumbnail': (('image', 'imageUrl'), any, {lambda i: i.format(
+                width=1920, height=1080, quality=100, blur=0, bg='false', image_format='jpg')}),
+            'timestamp': ('broadcastDateTime', {parse_iso8601}),
+        })
+
+    def _get_programme_info(self, programme):
+        return traverse_obj(programme, {
+            'series': 'title',
+            'series_id': ('encodedProgrammeId', 'letterA'),
+        })
 
     def _get_formats(self, episode, video_id, platform):
         featureset = ['mpeg-dash', 'widevine', 'outband-webvtt', 'hd', 'single-track']
@@ -480,8 +494,8 @@ class ITVXIE(InfoExtractor):
 
 class MytvSuperIE(InfoExtractor):
     _VALID_URL = r'https://www\.mytvsuper\.com/(?:(?P<lang>tc|en)/)?programme/.*/e/(?P<id>\d+)/'
-    _GEO_COUNTRIES = ['HK']
     _ANON_TOKEN = 'eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.eyJib3NzX2lkIjoiMDAwMDAwMDAxIiwiZGV2aWNlX3Rva2VuIjoiQ3ZmTUNzVTh4UGlpYmtDUUVrSzM5NUpnIiwiZGV2aWNlX2lkIjoiMCIsImRldmljZV90eXBlIjoid2ViIiwiZGV2aWNlX29zIjoiYnJvd3NlciIsImRybV9pZCI6bnVsbCwiZXh0cmEiOnsicHJvZmlsZV9pZCI6MX0sImlhdCI6MTY0NjI5MzQxNCwiZXhwIjoxNjQ2Mjk3MDE0fQ.t5qYMiV4RJkAZ9FfmmJtigpzNca0P5ZnI4AEXU61HWVIJd5cIUQlNufOJbN4R3MPJxs7msOVBdosIMaIhF49so_ubufqSNDDK9s3qZRpAUaHvRtiXQWCuuL3Am07IwaR6vO-yNFpNtnhTWp7V-5KkmJjmjgwtbQlwK5FU424Ef9iFu64aeounen8o5cuBuql5nRl6mFOX7QMx3Cr0XmLyJBRsuuoXlivaGzNchqT4rkmck0SUqeeBSzcpoDdFry4SXZO9I_CIK75bOX4Icw5p8ZFwAzYvE5xhTpAEdRUKMPSDMRD9Vak-WKPWhQBeV8X5LJONhaofMaq0j0HC5sM6arPQR6x2r5y5IPZwVOcUaYqJVlgXOAP72iFwCkZBm30qJV9p5eLSNWizpVUbYIEiwjcqBQ9ZZR2jqszzSEZpsTO1kwQ3jIViewwFJjffBljrp5ZsRDj-vXrdZ-tXVY4ecsgrjUXJJEEMKMCBVFLzuu5is6Hgdr8BUdm8QAPQqvvkqu7W0Gt-2YAgcU4eEG2wzx1485wxNxLgXXG10SwzH12OHxqoMl3_KP22JN9JgP6uS1Br4yLFqo-v3Z-UOAo3x_yfivgcW34uI4VHSF1JiQfJinsSWeHOGPJrDSDvrCNLZbFonX2xaWVOQ3Uf8hXum55xNufLM8Trt4Ga8CBZMY'
+    _USERTOKEN = None
 
     def _real_extract(self, url):
         lang, episode_id = self._match_valid_url(url).group('lang', 'id')
@@ -494,16 +508,25 @@ class MytvSuperIE(InfoExtractor):
 
         return self._get_episode(programme, episode['currEpisode'], lang or 'tc')
 
-    def _get_token(self, video_id):
-        if self._cookies_passed:
-            session = self._download_json(
-                'https://www.mytvsuper.com/api/auth/getSession/self/', video_id)
+    def _get_token(self):
+        if self._USERTOKEN:
+            return self._USERTOKEN
 
+        session = self._download_json(
+            'https://www.mytvsuper.com/api/auth/getSession/self/', None,
+            note='Downloading session')
+
+        if not session.get('supported_country', True):
+            self._initialize_geo_bypass({'countries': ['MO']})
+
+        if self._cookies_passed:
             if not session.get('error') and (token := traverse_obj(session, ('user', 'token'))):
                 self.cache.store('mytvsuper', 'token', token)
+                self._USERTOKEN = token
                 return token
 
-        return self.cache.load('mytvsuper', 'token') or self._ANON_TOKEN
+        self._USERTOKEN = self.cache.load('mytvsuper', 'token') or self._ANON_TOKEN
+        return self._USERTOKEN
 
     def _get_episode(self, programme, episode, lang):
         episode_name = self._get_mytv_episode_name(episode, lang)
@@ -512,7 +535,7 @@ class MytvSuperIE(InfoExtractor):
         data = self._download_json(
             'https://user-api.mytvsuper.com/v1/video/checkout', episode_id,
             query={'platform': 'web', 'video_id': episode['video_id']},
-            headers={'Authorization': 'Bearer ' + self._get_token(episode_id)})
+            headers={'Authorization': 'Bearer ' + self._get_token()})
 
         formats = []
         profiles = {profile['quality']: profile['streaming_path'] for profile in data['profiles']}
@@ -528,7 +551,7 @@ class MytvSuperIE(InfoExtractor):
                 data=challenge,
                 headers={
                     'Content-Type': 'application/octet-stream',
-                    'x-user-token': self._get_token(episode_id),
+                    'x-user-token': self._get_token(),
                 }).read()
 
         return {
@@ -600,6 +623,85 @@ class MytvSuperPlaylistIE(MytvSuperIE):
                 }),
                 len(episodes['items']), 1),
         }
+
+
+class NHKIE(InfoExtractor):
+    _VALID_URL = r'https://plus\.nhk\.jp/watch/st/(?P<id>[a-z0-9_]+)'
+
+    def _real_extract(self, url):
+        content_id = self._match_id(url)
+        stream = self._download_json(
+            f'https://vod-npd2.cdn.plus.nhk.jp/npd2/r5/pl2/streams/4/{content_id}.json'
+            if re.match(r'^[0-9]{3}_', content_id)
+            else f'https://api-plus.nhk.jp/r5/pl2/streams/4/{content_id}', content_id,
+            query={'area_id': '130', 'is_rounded': 'false'})
+
+        program = stream['body'][0]['stream_type']['program']
+        data = self._download_json(program['hsk']['video_descriptor'], content_id)
+
+        for playlist in data['manifests']:
+            if playlist['drm_type'] == 'cenc':
+                fmts, subs = self._extract_m3u8_formats_and_subtitles(playlist['url'], content_id, 'mp4')
+
+                def license_callback(challenge):
+                    return self._request_webpage(
+                        'https://drm.npd.plus.nhk.jp/widevine/license', content_id,
+                        note='Fetching keys', data=challenge,
+                        headers={'authorization': 'Bearer ' + self._get_access_key()}).read()
+
+                return {
+                    'id': content_id,
+                    'title': program['title'],
+                    'description': program['content'],
+                    'formats': fmts,
+                    'subtitles': subs,
+                    '_m3u8_wv': True,
+                    '_license_callback': license_callback,
+                }
+
+    def _get_user_token(self):
+        if (token := self.cache.load(self.IE_NAME, 'token')) and \
+                jwt_decode_hs256(token)['exp'] >= time.time() + 300:
+            return token
+
+        if not self._cookies_passed:
+            self.raise_login_required()
+
+        _, urlh = self._download_webpage_handle(
+            'https://agree.auth.nhkid.jp/oauth/AuthorizationEndpoint', None,
+            'Get user token',
+            query={
+                'scope': 'openid SIMUL001',
+                'response_type': 'id_token token',
+                'client_id': 'simul',
+                'redirect_uri': 'https://plus.nhk.jp/auth/login',
+                'claims': '{"id_token":{"service_level":{"essential":true}}}',
+                'nonce': uuid.uuid4(),
+                'did': uuid.uuid4(),
+            })
+
+        if (token := traverse_obj(parse_qs(urlh.url.replace('#', '?')), ('id_token', 0))):
+            self.cache.store(self.IE_NAME, 'token', token)
+            return token
+
+        raise ExtractorError('Unable to get user token', expected=True)
+
+    def _get_access_key(self):
+        access_key = self.cache.load(self.IE_NAME, 'accesskey') or {}
+
+        if access_key.get('expire', 0) < time.time() + 300 and (token := self._get_user_token()):
+            access_key = self._download_json(
+                'https://ctl.npd.plus.nhk.jp/create-accesskey', None,
+                note='Create access key',
+                headers={
+                    'accept': 'application/json',
+                    'authorization': 'Bearer ' + token,
+                    'content-type': 'application/json',
+                }, data=b'{}')
+
+            self.cache.store(self.IE_NAME, 'accesskey', access_key)
+
+        return access_key.get('drmToken')
 
 
 class SonyLIVIE(_SonyLIVIE, plugin_name='yt-dlp-mp4decrypt'):
