@@ -493,12 +493,16 @@ class ITVXIE(InfoExtractor):
 
 
 class MytvSuperIE(InfoExtractor):
-    _VALID_URL = r'https://www\.mytvsuper\.com/(?:(?P<lang>tc|en)/)?programme/.*/e/(?P<id>\d+)/'
+    _VALID_URL = r'https://www\.mytvsuper\.com/(?:(?P<lang>tc|en)/)?programme/[a-z0-9]+_(?P<pid>\d+)/([^/#]+)/(?:e/(?P<id>\d+)/)?'
     _ANON_TOKEN = 'eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.eyJib3NzX2lkIjoiMDAwMDAwMDAxIiwiZGV2aWNlX3Rva2VuIjoiQ3ZmTUNzVTh4UGlpYmtDUUVrSzM5NUpnIiwiZGV2aWNlX2lkIjoiMCIsImRldmljZV90eXBlIjoid2ViIiwiZGV2aWNlX29zIjoiYnJvd3NlciIsImRybV9pZCI6bnVsbCwiZXh0cmEiOnsicHJvZmlsZV9pZCI6MX0sImlhdCI6MTY0NjI5MzQxNCwiZXhwIjoxNjQ2Mjk3MDE0fQ.t5qYMiV4RJkAZ9FfmmJtigpzNca0P5ZnI4AEXU61HWVIJd5cIUQlNufOJbN4R3MPJxs7msOVBdosIMaIhF49so_ubufqSNDDK9s3qZRpAUaHvRtiXQWCuuL3Am07IwaR6vO-yNFpNtnhTWp7V-5KkmJjmjgwtbQlwK5FU424Ef9iFu64aeounen8o5cuBuql5nRl6mFOX7QMx3Cr0XmLyJBRsuuoXlivaGzNchqT4rkmck0SUqeeBSzcpoDdFry4SXZO9I_CIK75bOX4Icw5p8ZFwAzYvE5xhTpAEdRUKMPSDMRD9Vak-WKPWhQBeV8X5LJONhaofMaq0j0HC5sM6arPQR6x2r5y5IPZwVOcUaYqJVlgXOAP72iFwCkZBm30qJV9p5eLSNWizpVUbYIEiwjcqBQ9ZZR2jqszzSEZpsTO1kwQ3jIViewwFJjffBljrp5ZsRDj-vXrdZ-tXVY4ecsgrjUXJJEEMKMCBVFLzuu5is6Hgdr8BUdm8QAPQqvvkqu7W0Gt-2YAgcU4eEG2wzx1485wxNxLgXXG10SwzH12OHxqoMl3_KP22JN9JgP6uS1Br4yLFqo-v3Z-UOAo3x_yfivgcW34uI4VHSF1JiQfJinsSWeHOGPJrDSDvrCNLZbFonX2xaWVOQ3Uf8hXum55xNufLM8Trt4Ga8CBZMY'
     _USERTOKEN = None
 
     def _real_extract(self, url):
-        lang, episode_id = self._match_valid_url(url).group('lang', 'id')
+        lang, programme_id, episode_id = self._match_valid_url(url).group('lang', 'pid', 'id')
+
+        if not episode_id:
+            return self._get_playlist(programme_id, lang or 'tc')
+
         episode = self._download_json(
             'https://content-api.mytvsuper.com/v2/episode/id', episode_id,
             query={'episode_id': episode_id})
@@ -507,6 +511,34 @@ class MytvSuperIE(InfoExtractor):
             query={'programme_id': episode['programme_id']})
 
         return self._get_episode(programme, episode['currEpisode'], lang or 'tc')
+
+    def _get_playlist(self, programme_id, lang):
+        programme = self._download_json(
+            'https://content-api.mytvsuper.com/v1/programme/details', programme_id,
+            query={'programme_id': programme_id})
+        episodes = self._download_json(
+            'https://content-api.mytvsuper.com/v1/episode/list', programme_id,
+            query={
+                'programme_id': programme_id,
+                'start_episode_no': 1,
+                'end_episode_no': programme['latest_episode_no'],
+                'sort_desc': 'true',
+            })
+
+        return {
+            '_type': 'playlist',
+            'id': programme_id,
+            'title': programme['name_' + lang],
+            'description': programme['long_desc_' + lang],
+            'thumbnails': [{'id': size, 'url': programme['image'][size]} for size in programme['image']],
+            **self._get_programme_info(programme, lang),
+            'entries': InAdvancePagedList(
+                lambda idx: (yield {
+                    **self._get_episode(programme, episodes['items'][idx], lang),
+                    'ie_key': 'MytvSuper',
+                }),
+                len(episodes['items']), 1),
+        }
 
     def _get_token(self):
         if self._USERTOKEN:
@@ -592,39 +624,6 @@ class MytvSuperIE(InfoExtractor):
         })
 
 
-class MytvSuperPlaylistIE(MytvSuperIE):
-    _VALID_URL = r'https://www\.mytvsuper\.com/(?P<lang>tc|en)/programme/[a-z0-9]+_(?P<id>\d+)/([^/#]+)/$'
-
-    def _real_extract(self, url):
-        lang, programme_id = self._match_valid_url(url).group('lang', 'id')
-        programme = self._download_json(
-            'https://content-api.mytvsuper.com/v1/programme/details', programme_id,
-            query={'programme_id': programme_id})
-        episodes = self._download_json(
-            'https://content-api.mytvsuper.com/v1/episode/list', programme_id,
-            query={
-                'programme_id': programme_id,
-                'start_episode_no': 1,
-                'end_episode_no': programme['latest_episode_no'],
-                'sort_desc': 'true',
-            })
-
-        return {
-            '_type': 'playlist',
-            'id': programme_id,
-            'title': programme['name_' + lang],
-            'description': programme['long_desc_' + lang],
-            'thumbnails': [{'id': size, 'url': programme['image'][size]} for size in programme['image']],
-            **self._get_programme_info(programme, lang),
-            'entries': InAdvancePagedList(
-                lambda idx: (yield {
-                    **self._get_episode(programme, episodes['items'][idx], lang),
-                    'ie_key': 'MytvSuper',
-                }),
-                len(episodes['items']), 1),
-        }
-
-
 class NHKIE(InfoExtractor):
     _VALID_URL = r'https://plus\.nhk\.jp/watch/st/(?P<id>[a-z0-9_]+)'
 
@@ -655,7 +654,6 @@ class NHKIE(InfoExtractor):
                     'description': program['content'],
                     'formats': fmts,
                     'subtitles': subs,
-                    '_m3u8_wv': True,
                     '_license_callback': license_callback,
                 }
 

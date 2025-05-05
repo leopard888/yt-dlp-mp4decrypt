@@ -49,18 +49,16 @@ class Mp4DecryptPP(PostProcessor):
         self._license_urls[mpd_url] = license_url
 
     def run(self, info):
-        for part in info.get('requested_formats', (info,)):
-            if info.get('_m3u8_wv') and part.get('protocol') == 'm3u8_native':
-                self._license_urls[part['manifest_url']] = None
+        has_license = any(key in info for key in ('_cenc_key', '_license_url', '_license_callback'))
 
-            if self._is_encrypted(part):
+        for part in info.get('requested_formats', (info,)):
+            if (has_license and part.get('protocol') == 'm3u8_native') or self._is_encrypted(part):
                 self._add_keys(info, part)
 
         return [], info
 
     def _is_encrypted(self, part):
-        return (part.get('container') in ('mp4_dash', 'm4a_dash')
-                or part.get('protocol') == 'm3u8_native') and \
+        return part.get('container') in ('mp4_dash', 'm4a_dash') and \
             part.get('manifest_url') in self._license_urls
 
     def _add_keys(self, info, part):
@@ -222,8 +220,7 @@ class Mp4DecryptExtractor:
 
 class Mp4DecryptDecryptor(PostProcessor):
     def run(self, info):
-        to_delete = []
-        encrypted = []
+        to_delete, encrypted = [], []
 
         if 'requested_formats' in info:
             encrypted = [p for p in info['requested_formats'] if self._is_encrypted(p)]
