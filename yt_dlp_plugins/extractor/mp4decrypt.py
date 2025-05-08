@@ -324,8 +324,9 @@ class ITVXIE(InfoExtractor):
             }
 
         if programme := props.get('programme'):
-            base_url = 'https://www.itv.com/watch/%s/%s' % (programme['titleSlug'], video_id)
             programme_info = self._get_programme_info(programme)
+            video_id = programme_info['series_id']
+            base_url = 'https://www.itv.com/watch/%s/%s' % (programme['titleSlug'], video_id)
             episodes = orderedSet([{
                 **self._get_info(ep),
                 **programme_info,
@@ -366,11 +367,13 @@ class ITVXIE(InfoExtractor):
     def _get_formats(self, episode, video_id, platform):
         featureset = ['mpeg-dash', 'widevine', 'outband-webvtt', 'hd', 'single-track']
 
-        if 'INBAND_AUDIO_DESCRIPTION' in episode.get('availabilityFeatures', []):
+        if episode.get('audioDescribed'):
             featureset.append('inband-audio-description')
 
+        get_bsl = 'bslPlaylistUrl' in episode and bool(self._configuration_arg('bsl'))
+
         data = self._download_json(
-            episode['playlistUrl'], video_id,
+            episode['bslPlaylistUrl' if get_bsl else 'playlistUrl'], video_id,
             data=json.dumps({
                 'client': {
                     'version': '4.1',
@@ -454,7 +457,7 @@ class ITVXIE(InfoExtractor):
     def _get_chapters(self, data):
         chapters = traverse_obj(data, (
             'Playlist', 'Video', 'Timecodes',
-            {'Opening Titles': 'OpeningTitles', 'End Credits': 'EndCredits'},
+            {'Opening Titles': 'OpeningTitles', 'End Credits': 'EndCredits', 'Recap': 'Recap'},
             {dict.items}, ...,
             {
                 'start_time': (1, 'StartTime', {parse_duration}),
@@ -624,7 +627,7 @@ class MytvSuperIE(InfoExtractor):
         })
 
 
-class NHKIE(InfoExtractor):
+class NHKPlusIE(InfoExtractor):
     _VALID_URL = r'https://plus\.nhk\.jp/watch/st/(?P<id>[a-z0-9_]+)'
 
     def _real_extract(self, url):
