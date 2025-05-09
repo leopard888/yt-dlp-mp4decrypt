@@ -265,29 +265,31 @@ class Channel5IE(InfoExtractor):
             'age_limit': ('rat', {self._GUIDANCE.get}),
         })
 
-        formats, subtitles = [], {}
-        media = self._download_json(
-            '%s/my5firetvhydradash/%s.json' % (self._API_BASE, data['id']), data['id'])
+        formats, subtitles, license_urls = [], {}, {}
+        video_id = data['id']
 
-        if asset := traverse_obj(media, ('assets', 0)):
-            for rendition in asset.get('renditions', []):
-                fmts, subs = self._extract_mpd_formats_and_subtitles(
-                    rendition['url'].replace('_SD-tt', '-tt'), data['id'])
-                formats.extend(fmts)
-                self._merge_subtitles(subs, target=subtitles)
+        for platform in ('my5firetv', 'my5firetvhydradash'):
+            media = self._download_json(
+                f'{self._API_BASE}/{platform}/{video_id}.json', video_id)
 
-            if url := asset.get('subtitleurl'):
-                self._merge_subtitles({'eng': [{'url': url}]}, target=subtitles)
+            if asset := traverse_obj(media, ('assets', 0)):
+                for rendition in asset.get('renditions', []):
+                    mpd_url = rendition['url'].replace('_SD-tt', '-tt')
+                    fmts, subs = self._extract_mpd_formats_and_subtitles(mpd_url, video_id)
+                    formats.extend(fmts)
+                    self._merge_subtitles(subs, target=subtitles)
 
-            info_dict.update(traverse_obj(asset, {
-                'duration': 'duration',
-                '_license_url': 'keyserver',
-            }))
+                if sub_url := asset.get('subtitleurl'):
+                    self._merge_subtitles({'eng': [{'url': sub_url}]}, target=subtitles)
+
+                info_dict['duration'] = asset['duration']
+                license_urls[mpd_url] = asset['keyserver']
 
         return {
             **info_dict,
             'formats': formats,
             'subtitles': subtitles,
+            '_license_url': license_urls,
         }
 
     def _add_handler(self, director):
@@ -643,7 +645,17 @@ class NHKPlusIE(InfoExtractor):
 
         for playlist in data['manifests']:
             if playlist['drm_type'] == 'cenc':
-                fmts, subs = self._extract_m3u8_formats_and_subtitles(playlist['url'], content_id, 'mp4')
+                fmts, subs = self._extract_m3u8_formats_and_subtitles(playlist['url'], content_id)
+                self._remove_duplicate_formats(fmts)
+
+                for fmt in fmts:
+                    if fmt.get('vcodec') == 'none':
+                        fmt.setdefault('ext', 'm4a')
+                        fmt.setdefault('abr', int_or_none(self._search_regex(
+                            r'/a[sm](\d+)/\w+\.m3u8$', fmt['url'], 'abr', default=None)))
+
+                        if fmt.get('source_preference') == -2:
+                            fmt['preference'] = fmt['source_preference']
 
                 def license_callback(challenge):
                     return self._request_webpage(
@@ -936,13 +948,18 @@ class ViuTVIE(InfoExtractor):
         self._request_webpage(HEADRequest(vod['asset'][0]), product_id, 'Touch asset', headers=proxy)
 
         if '.m3u8' in vod['asset'][0]:
-            return self._extract_m3u8_formats_and_subtitles(vod['asset'][0], product_id)
+            fmts, subs = self._extract_m3u8_formats_and_subtitles(vod['asset'][0], product_id)
+            return {'formats': fmts, 'subtitles': subs}
 
-        return self._extract_mpd_formats_and_subtitles(vod['asset'][0], product_id)
+        fmts, subs = self._extract_mpd_formats_and_subtitles(vod['asset'][0], product_id)
+
+        return {
+            'formats': fmts,
+            'subtitles': subs,
+            '_cenc_key': '91ba752a446148c68400d78374b178b4:a01d7dc4edf582496b7e73d67e9e6899',
+        }
 
     def _get_episode(self, episode):
-        formats, subtitles = self._get_formats(episode['productId'])
-
         return {
             **traverse_obj(episode, {
                 'id': 'productId',
@@ -957,7 +974,5 @@ class ViuTVIE(InfoExtractor):
                 'episode_number': 'episodeNum',
                 'timestamp': ('onAirStartDate', {int_or_none(scale=1000)}),
             }),
-            'formats': formats,
-            'subtitles': subtitles,
-            '_cenc_key': '91ba752a446148c68400d78374b178b4:a01d7dc4edf582496b7e73d67e9e6899',
+            **self._get_formats(episode['productId']),
         }
