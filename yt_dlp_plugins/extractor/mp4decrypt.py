@@ -90,7 +90,7 @@ class Channel4IE(InfoExtractor):
         return {
             'id': video_id,
             **traverse_obj(ep_info, ('episode', {
-                'title': 'title',
+                'title': (('title', 'originalTitle'), filter, any),
                 'description': 'summary',
                 'thumbnail': ('image', 'href', {lambda href: href.replace('{&resize}', '')}),
                 'series_number': ('episodeNumber', {int_or_none}),
@@ -583,7 +583,7 @@ class MytvSuperIE(InfoExtractor):
 
         def license_callback(challenge):
             return self._request_webpage(
-                'https://wv.drm.tvb.com/wvproxy/mlicense', episode_id,
+                'https://wv.drm.tvb.com/wvproxy/mlicense', episode_id, 'Fetching keys',
                 query={'contentid': data['content_id']},
                 data=challenge,
                 headers={
@@ -952,7 +952,6 @@ class ViuTVIE(InfoExtractor):
             return {'formats': fmts, 'subtitles': subs}
 
         fmts, subs = self._extract_mpd_formats_and_subtitles(vod['asset'][0], product_id)
-
         return {
             'formats': fmts,
             'subtitles': subs,

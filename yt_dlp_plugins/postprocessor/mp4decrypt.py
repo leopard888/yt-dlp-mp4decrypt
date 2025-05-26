@@ -217,6 +217,46 @@ class Mp4DecryptExtractor:
 
         return self._mixin_class._parse_brightcove_metadata(self, json_data, *args, **kwargs)
 
+    def _extract_from_streaks_api(self, *args, **kwargs):
+        real_methods = {}
+        license_urls = {}
+
+        def swap_method(name, method):
+            real_methods[name] = getattr(self, name)
+            setattr(self, name, method)
+
+        def _m3u8_override(m3u8_url, video_id, *args, **kwargs):
+            kwargs.update(zip(real_methods['_extract_m3u8_formats_and_subtitles'].__code__.co_varnames[3:], args))
+            return self._extract_mpd_formats_and_subtitles(
+                m3u8_url, video_id, mpd_id=kwargs.get('m3u8_id'),
+                **{key: kwargs[key] for key in self._extract_mpd_periods.__code__.co_varnames if key in kwargs})
+
+        def _parse_json_override(*args, **kwargs):
+            response = real_methods['_parse_json'](*args, **kwargs)
+            drm_sources = []
+
+            for source in response.get('sources', []):
+                if key_system := source.get('key_systems', {}).get('com.widevine.alpha'):
+                    drm_sources.append({**source, 'key_systems': {}, 'type': 'application/x-mpegURL'})
+                    license_urls[source['src']] = key_system['license_url']
+
+            if drm_sources:
+                response['sources'] = drm_sources
+                swap_method('_extract_m3u8_formats_and_subtitles', _m3u8_override)
+
+            return response
+
+        swap_method('_parse_json', _parse_json_override)
+        info_dict = self._mixin_class._extract_from_streaks_api(self, *args, **kwargs)
+
+        for name, method in real_methods.items():
+            setattr(self, name, method)
+
+        if license_urls:
+            info_dict['_license_url'] = license_urls
+
+        return info_dict
+
 
 class Mp4DecryptDecryptor(PostProcessor):
     def run(self, info):
