@@ -800,12 +800,52 @@ class TVBNewsIE(InfoExtractor):
 class TVNZIE(InfoExtractor):
     _VALID_URL = r'https://www\.tvnz\.co\.nz/(?P<id>[0-9a-z\-\/]+)'
     BRIGHTCOVE_URL_TEMPLATE = 'http://players.brightcove.net/%s/%s_default/index.html?videoId=%s'
+    _API_BASE = 'https://apis-public-prod.tech.tvnz.co.nz'
 
     def _real_extract(self, url):
         video_id = self._match_id(url)
-        data = self._download_json(
-            'https://apis-public-prod.tech.tvnz.co.nz/api/v1/web/play/page/' + video_id, video_id)
-        video = data['_embedded'][data['layout']['video']['href']]
+        data = self._download_json(self._API_BASE + '/api/v1/web/play/page/' + video_id, video_id)
+
+        if seasons := traverse_obj(data, (
+                'layout', 'defaultSectionLayout', 'slots', 'main', 'modules', ..., 'lists', ...)):
+            return {
+                '_type': 'playlist',
+                **traverse_obj(data, ('_embedded', data['layout']['showHref'], {
+                    'id': 'showId',
+                    'title': 'title',
+                    'description': 'synopsis',
+                    'age_limit': ('rating', 'classification', {int_or_none}),
+                    'categories': ('categories', ..., 'label'),
+                    'thumbnails': (('coverImage', 'tileImage'), {'url': 'src', 'ext': 'extension'}),
+                    'timestamp': ('lastPublishedEpisodeDate', {parse_iso8601}),
+                })),
+                'entries': InAdvancePagedList(
+                    lambda idx: (yield self._get_season(seasons[idx], data, video_id)),
+                    len(seasons), 1),
+            }
+
+        return self._get_video(data, data['layout']['video']['href'])
+
+    def _get_season(self, season, data, video_id):
+        if season['href'] in data['_embedded']:
+            season_data = data['_embedded'][season['href']]
+            season_data['_embedded'] = data['_embedded']
+        else:
+            season_data = self._download_json(self._API_BASE + season['href'], video_id)
+
+        contents = traverse_obj(season_data, ('content', ..., 'href'))
+        return {
+            '_type': 'playlist',
+            'title': season_data.get('label'),
+            'entries': InAdvancePagedList(
+                lambda idx: (yield self._get_video(season_data, contents[idx])),
+                len(contents), 1),
+            'extractor': self.IE_NAME,
+            'extractor_key': self.ie_key(),
+        }
+
+    def _get_video(self, data, href):
+        video = data['_embedded'][href]
 
         if video['type'] == 'showVideo':
             return {
