@@ -991,6 +991,11 @@ class TVPVODVideoIE(_TVPVODVideoIE, plugin_name='yt-dlp-mp4decrypt'):
         if url := traverse_obj(drm, ('WIDEVINE', 'src')):
             info_dict['_license_url'] = url
 
+        if traverse_obj(drm, ('FAIRPLAY', 'src')):
+            for fmt in info_dict['formats']:
+                if fmt.get('protocol') == 'm3u8_native':
+                    fmt['has_drm'] = True
+
         return info_dict
 
 
