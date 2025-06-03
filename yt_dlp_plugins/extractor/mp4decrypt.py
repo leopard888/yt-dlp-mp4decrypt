@@ -11,6 +11,7 @@ from yt_dlp.aes import aes_cbc_decrypt_bytes
 from yt_dlp.extractor.common import InfoExtractor
 from yt_dlp.extractor.sonyliv import SonyLIVIE as _SonyLIVIE
 from yt_dlp.extractor.stv import STVPlayerIE as _STVPlayerIE
+from yt_dlp.extractor.tvp import TVPVODVideoIE as _TVPVODVideoIE
 from yt_dlp.networking import HEADRequest
 from yt_dlp.utils import (
     NO_DEFAULT,
@@ -967,6 +968,30 @@ class TVNZIE(InfoExtractor):
                 }),
                 'ie_key': 'BrightcoveNew',
             }
+
+
+class TVPVODVideoIE(_TVPVODVideoIE, plugin_name='yt-dlp-mp4decrypt'):
+    def _real_extract(self, url):
+        real_call_api = self._call_api
+        drm = None
+
+        def _call_api(resource, *args, **kwargs):
+            nonlocal drm
+            document = real_call_api(resource, *args, **kwargs)
+
+            if resource.endswith('/videos/playlist'):
+                drm = document.get('drm')
+
+            return document
+
+        self._call_api = _call_api
+        info_dict = super()._real_extract(url)
+        self._call_api = real_call_api
+
+        if url := traverse_obj(drm, ('WIDEVINE', 'src')):
+            info_dict['_license_url'] = url
+
+        return info_dict
 
 
 class UIE(InfoExtractor):
