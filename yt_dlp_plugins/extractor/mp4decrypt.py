@@ -1,8 +1,10 @@
 import base64
 import json
 import os
+import random
 import re
 import time
+import urllib.parse
 import uuid
 
 from yt_dlp.aes import aes_cbc_decrypt_bytes
@@ -311,12 +313,78 @@ class Channel5IE(InfoExtractor):
             500 if rh == handler and req.url.startswith(self._API_BASE) else 0)
 
 
+class DAZNIE(InfoExtractor):
+    _VALID_URL = r'https://www\.dazn\.com/(?P<lang>[a-z]{2})-\w+/(?:[^/]+/)+(?P<id>[0-9a-z]{20,})'
+
+    def _real_extract(self, url):
+        lang, content_id = self._match_valid_url(url).group('lang', 'id')
+        user_agent, urlh = self._download_webpage_handle(
+            'https://ifconfig.me/ua', None, 'Checking user agent', impersonate=True)
+        target = urlh.extensions.get('impersonate', True)
+        auth = 'Bearer ' + self._get_token()
+
+        data = self._download_json(
+            'https://api.playback.indazn.com/v5/Playback', content_id,
+            query={
+                'AppVersion': '0.79.0', 'DrmType': 'WIDEVINE', 'Format': 'MPEG-DASH',
+                'PlayerId': '@dazn/peng-html5-core/web/web', 'Platform': 'web',
+                'Model': 'unknown', 'Secure': 'true', 'Manufacturer': 'microsoft',
+                'AssetId': content_id, 'LanguageCode': lang,
+            },
+            headers={'accept': '*/*', 'authorization': auth, 'x-dazn-device': uuid.uuid4()},
+            impersonate=target,
+        )
+
+        formats, license_url = [], None
+
+        for source in data['PlaybackDetails'][-1:]:
+            cdn_token = {source['CdnToken']['Name']: source['CdnToken']['Value']}
+            fmts = self._extract_mpd_formats(
+                source['ManifestUrl'], content_id,
+                query=cdn_token, headers={'user-agent': user_agent})
+
+            for fmt in fmts:
+                fmt.update({
+                    'extra_param_to_segment_url': urllib.parse.urlencode(cdn_token),
+                    'http_headers': {'user-agent': user_agent},
+                })
+
+            formats.extend(fmts)
+            license_url = source['LaUrl']
+
+        def license_callback(challenge):
+            return self._request_webpage(
+                license_url, content_id, note='Fetching keys', data=challenge,
+                headers={'authorization': auth, 'content-type': 'application/octet-stream'},
+                impersonate=target,
+            ).read()
+
+        return {
+            **traverse_obj(data, {
+                'id': ('Asset', 'Id'),
+                'title': ('Asset', 'Title'),
+            }),
+            'formats': formats,
+            '_license_callback': license_callback,
+        }
+
+    def _get_token(self):
+        # return 'my-token'
+        device_id = hex(random.randint(0, 0x7fffffff)).zfill(10)
+        return self._download_json(
+            'https://authentication-prod.ar.indazn.com/v1/anonymous-user', None,
+            'Fetching anonymous token',
+            headers={'accept': '*/*', 'content-type': 'application/json'},
+            data=json.dumps({'deviceId': device_id}).encode(),
+        )['token']
+
+
 class ITVXIE(InfoExtractor):
     _VALID_URL = r'https://www\.itv\.com/watch/(?:[^/]+/)+(?P<id>[0-9a-zA-Z]+)'
 
     def _real_extract(self, url):
         video_id = self._match_id(url)
-        webpage = self._download_webpage(url, video_id)
+        webpage = self._download_webpage(url, video_id, impersonate=True)
         props = self._search_nextjs_data(webpage, video_id)['props']['pageProps']
 
         if 'episode' in props:
