@@ -2,6 +2,7 @@ import hashlib
 import os
 import re
 import subprocess
+import tempfile
 
 from pywidevine.cdm import Cdm
 from pywidevine.device import Device
@@ -11,7 +12,7 @@ from yt_dlp.postprocessor.common import PostProcessor
 from yt_dlp.utils import (
     Popen,
     PostProcessingError,
-    YoutubeDLError,
+    UnavailableVideoError,
     prepend_extension,
     truncate_string,
     variadic,
@@ -48,12 +49,11 @@ class Mp4DecryptPP(PostProcessor):
         self._license_urls[mpd_url] = license_url
 
     def run(self, info):
-        if 'requested_formats' in info:
-            for part in info['requested_formats']:
-                if self._is_encrypted(part):
-                    self._add_keys(info, part)
-        elif self._is_encrypted(info):
-            self._add_keys(info, info)
+        has_license = any(key in info for key in ('_cenc_key', '_license_url', '_license_callback'))
+
+        for part in info.get('requested_formats', (info,)):
+            if (has_license and part.get('protocol') == 'm3u8_native') or self._is_encrypted(part):
+                self._add_keys(info, part)
 
         return [], info
 
@@ -68,7 +68,7 @@ class Mp4DecryptPP(PostProcessor):
         if keys := self._get_keys(info, part):
             part['_mp4decrypt'] = keys
         else:
-            raise YoutubeDLError('No keys found for ' + part['format_id'])
+            raise UnavailableVideoError('No keys found for ' + part['format_id'])
 
         if self._decryptor not in info.get('__postprocessors', []):
             info.setdefault('__postprocessors', [])
@@ -127,9 +127,15 @@ class Mp4DecryptPP(PostProcessor):
                 offset += size
                 yield PSSH(raw[pssh_offset:pssh_offset + size])
 
-        init_data = self._downloader.urlopen(Request(
-            part['fragment_base_url'] + part['fragments'][0]['path'],
-            headers=part['http_headers'])).read()
+        init_data = b''
+        temp_file = tempfile.NamedTemporaryFile(suffix='.tmp', delete=False)
+        temp_file.close()
+        success, _ = self._downloader.dl(temp_file.name, part, test=True)
+
+        if success:
+            with open(temp_file.name, 'rb') as f:
+                init_data = f.read()
+            os.remove(temp_file.name)
 
         for pssh in find_wv_pssh_offsets(init_data):
             if pssh.system_id == PSSH.SystemId.Widevine:
@@ -211,11 +217,50 @@ class Mp4DecryptExtractor:
 
         return self._mixin_class._parse_brightcove_metadata(self, json_data, *args, **kwargs)
 
+    def _extract_from_streaks_api(self, *args, **kwargs):
+        real_methods = {}
+        license_urls = {}
+
+        def swap_method(name, method):
+            real_methods[name] = getattr(self, name)
+            setattr(self, name, method)
+
+        def _m3u8_override(m3u8_url, video_id, *args, **kwargs):
+            kwargs.update(zip(real_methods['_extract_m3u8_formats_and_subtitles'].__code__.co_varnames[3:], args))
+            return self._extract_mpd_formats_and_subtitles(
+                m3u8_url, video_id, mpd_id=kwargs.get('m3u8_id'),
+                **{key: kwargs[key] for key in self._extract_mpd_periods.__code__.co_varnames if key in kwargs})
+
+        def _parse_json_override(*args, **kwargs):
+            response = real_methods['_parse_json'](*args, **kwargs)
+            drm_sources = []
+
+            for source in response.get('sources', []):
+                if key_system := source.get('key_systems', {}).get('com.widevine.alpha'):
+                    drm_sources.append({**source, 'key_systems': {}, 'type': 'application/x-mpegURL'})
+                    license_urls[source['src']] = key_system['license_url']
+
+            if drm_sources:
+                response['sources'] = drm_sources
+                swap_method('_extract_m3u8_formats_and_subtitles', _m3u8_override)
+
+            return response
+
+        swap_method('_parse_json', _parse_json_override)
+        info_dict = self._mixin_class._extract_from_streaks_api(self, *args, **kwargs)
+
+        for name, method in real_methods.items():
+            setattr(self, name, method)
+
+        if license_urls:
+            info_dict['_license_url'] = license_urls
+
+        return info_dict
+
 
 class Mp4DecryptDecryptor(PostProcessor):
     def run(self, info):
-        to_delete = []
-        encrypted = []
+        to_delete, encrypted = [], []
 
         if 'requested_formats' in info:
             encrypted = [p for p in info['requested_formats'] if self._is_encrypted(p)]
