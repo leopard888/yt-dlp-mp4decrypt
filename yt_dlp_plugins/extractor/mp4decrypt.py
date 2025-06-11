@@ -477,7 +477,7 @@ class ITVXIE(InfoExtractor):
                     genres {
                         name
                     }
-                    titles(sortBy: SEQUENCE_ASC) {
+                    titles(sortBy: SEQUENCE_DESC) {
                         legacyId
                         title
                     }
