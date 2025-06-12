@@ -453,8 +453,8 @@ class ITVXIE(InfoExtractor):
                     'title': 'title',
                     'description': ('synopses', 'epg'),
                     'release_year': 'productionYear',
-                    'season_number': ('episodeNumber', {int_or_none}),
-                    'episode_number': ('seriesNumber', {int_or_none}),
+                    'season_number': ('seriesNumber', {int_or_none}),
+                    'episode_number': ('episodeNumber', {int_or_none}),
                     'genres': ('brand', 'genres', ..., 'name'),
                     'thumbnail': ('imageUrl', {lambda i: i.format(
                         width=1920, height=1080, quality=100, blur=0, bg='false', image_format='jpg')}),
