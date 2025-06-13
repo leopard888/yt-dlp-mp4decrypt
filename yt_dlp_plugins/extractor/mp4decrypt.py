@@ -380,90 +380,95 @@ class DAZNIE(InfoExtractor):
 
 
 class ITVXIE(InfoExtractor):
-    _VALID_URL = r'https://www\.itv\.com/watch/(?P<slug>[0-9a-z-]+)/(?P<brand>[0-9a]+)(?:/(?P<id>[0-9a]+))?'
+    _VALID_URL = r'https://www\.itv\.com/watch/(?P<slug>[0-9a-z-]+)/(?P<brand>[0-9a]+B?)(?:/(?P<id>[0-9a]+))?'
 
     def _real_extract(self, url):
         slug, brand_id, video_id = self._match_valid_url(url).group('slug', 'brand', 'id')
 
-        if video_id:
-            query = '''
-                query GetProgramme(
-                    $brandId: BrandLegacyId!
-                    $id: TitleLegacyId!
-                ) {
-                    titles(filter: { brandLegacyId: $brandId, legacyId: $id }) {
-                        titleType
+        if not video_id and not brand_id.endswith('B'):
+            if info_dict := self._get_brand(brand_id, slug):
+                return info_dict
+
+        query = '''
+            query GetProgramme(
+                $brandId: BrandLegacyId!
+                $id: TitleLegacyId
+            ) {
+                titles(filter: { brandLegacyId: $brandId, legacyId: $id }) {
+                    titleType
+                    title
+                    broadcastDateTime
+                    imageUrl
+                    brand {
                         title
-                        broadcastDateTime
-                        imageUrl
-                        brand {
-                            title
-                            genres {
-                                name
-                            }
-                        }
-                        synopses {
-                            epg
-                        }
-                        latestAvailableVersion {
-                            duration
-                            playlistUrl
-                            visuallySigned
-                            tier
-                            audioDescribed
-                            bsl {
-                                playlistUrl
-                            }
-                        }
-                        ... on Episode {
-                            episodeNumber
-                            seriesNumber
-                        }
-                        ... on Special {
-                            episodeNumber
-                            productionYear
-                        }
-                        ... on Film {
-                            productionYear
+                        genres {
+                            name
                         }
                     }
+                    synopses {
+                        epg
+                    }
+                    latestAvailableVersion {
+                        duration
+                        playlistUrl
+                        visuallySigned
+                        tier
+                        audioDescribed
+                        bsl {
+                            playlistUrl
+                        }
+                    }
+                    ... on Episode {
+                        episodeNumber
+                        seriesNumber
+                    }
+                    ... on Special {
+                        episodeNumber
+                        productionYear
+                    }
+                    ... on Film {
+                        productionYear
+                    }
                 }
-            '''
-
-            titles = self._download_json(
-                'https://content-inventory.prd.oasvc.itv.com/discovery', video_id,
-                query={
-                    'query': re.sub(r'\n\s+', ' ', query.strip()),
-                    'variables': json.dumps({
-                        'brandId': brand_id.replace('a', '/'),
-                        'id': video_id.replace('a', '/'),
-                    }, separators=(',', ':')),
-                })['data']['titles']
-
-            if not titles:
-                raise ExtractorError('Episode not found', video_id=video_id, expected=True)
-
-            return {
-                'id': video_id,
-                'title': traverse_obj(titles[0], ((
-                    ('seriesNumber', {lambda n: n and f'Series {n}'}),
-                    ('episodeNumber', {lambda n: n and f'Episode {n}'}),
-                ), all, {', '.join})),
-                **traverse_obj(titles[0], {
-                    'title': 'title',
-                    'description': ('synopses', 'epg'),
-                    'release_year': 'productionYear',
-                    'season_number': ('seriesNumber', {int_or_none}),
-                    'episode_number': ('episodeNumber', {int_or_none}),
-                    'genres': ('brand', 'genres', ..., 'name'),
-                    'thumbnail': ('imageUrl', {lambda i: i.format(
-                        width=1920, height=1080, quality=100, blur=0, bg='false', image_format='jpg')}),
-                    'timestamp': ('broadcastDateTime', {parse_iso8601}),
-                    'duration': ('latestAvailableVersion', 'duration', {parse_duration}),
-                }),
-                **self._get_episode(titles[0]['latestAvailableVersion'], video_id),
             }
+        '''
 
+        title_id, video_id = (video_id.replace('a', '/'), video_id) if video_id else (None, brand_id)
+        titles = self._download_json(
+            'https://content-inventory.prd.oasvc.itv.com/discovery', video_id,
+            query={
+                'query': re.sub(r'\n\s+', ' ', query.strip()),
+                'variables': json.dumps({
+                    'brandId': brand_id.replace('a', '/'),
+                    'id': title_id,
+                }, separators=(',', ':')),
+            })['data']['titles']
+
+        if not titles:
+            raise ExtractorError('Episode not found', video_id=video_id, expected=True)
+
+        return {
+            'id': video_id,
+            'title': traverse_obj(titles[0], ((
+                ('seriesNumber', {lambda n: n and f'Series {n}'}),
+                ('episodeNumber', {lambda n: n and f'Episode {n}'}),
+            ), all, {', '.join})),
+            **traverse_obj(titles[0], {
+                'title': 'title',
+                'description': ('synopses', 'epg'),
+                'release_year': 'productionYear',
+                'season_number': ('seriesNumber', {int_or_none}),
+                'episode_number': ('episodeNumber', {int_or_none}),
+                'genres': ('brand', 'genres', ..., 'name'),
+                'thumbnail': ('imageUrl', {lambda i: i.format(
+                    width=1920, height=1080, quality=100, blur=0, bg='false', image_format='jpg')}),
+                'timestamp': ('broadcastDateTime', {parse_iso8601}),
+                'duration': ('latestAvailableVersion', 'duration', {parse_duration}),
+            }),
+            **self._get_episode(titles[0]['latestAvailableVersion'], video_id),
+        }
+
+    def _get_brand(self, brand_id, slug):
         query = '''
             query GetProgramme(
                 $id: BrandLegacyId!
@@ -495,7 +500,7 @@ class ITVXIE(InfoExtractor):
             })['data']['brands']
 
         if not brands:
-            raise ExtractorError('Show not found', video_id=brand_id, expected=True)
+            return False
 
         return {
             '_type': 'playlist',
