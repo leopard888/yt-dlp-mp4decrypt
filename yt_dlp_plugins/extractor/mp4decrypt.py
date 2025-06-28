@@ -97,8 +97,8 @@ class Channel4IE(InfoExtractor):
                 'title': (('title', 'originalTitle'), filter, any),
                 'description': 'summary',
                 'thumbnail': ('image', 'href', {lambda href: href.replace('{&resize}', '')}),
-                'series_number': ('episodeNumber', {int_or_none}),
-                'episode_number': ('seriesNumber', {int_or_none}),
+                'season_number': ('seriesNumber', {int_or_none}),
+                'episode_number': ('episodeNumber', {int_or_none}),
                 'timestamp': ('firstTXDate', {parse_iso8601}),
                 'categories': ('brand', 'categories'),
             })),
@@ -783,12 +783,12 @@ class MytvSuperIE(InfoExtractor):
 
         data = self._download_json(
             'https://user-api.mytvsuper.com/v1/video/checkout', episode_id,
-            query={'platform': 'web', 'video_id': episode['video_id']},
+            query={'platform': 'android_tv', 'video_id': episode['video_id']},
             headers={'Authorization': 'Bearer ' + self._get_token()})
 
         formats = []
         profiles = {profile['quality']: profile['streaming_path'] for profile in data['profiles']}
-        profiles = (profiles['auto'],) if 'auto' in profiles else profiles.values()
+        profiles = traverse_obj(profiles, (('auto', 'high'),)) or profiles.values()
 
         for profile in profiles:
             formats.extend(self._extract_mpd_formats(profile.replace('https://', 'http://'), episode_id))
