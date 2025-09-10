@@ -503,7 +503,7 @@ class ITVXIE(InfoExtractor):
                 }, separators=(',', ':')),
             })['data']['titles']
 
-        if not titles:
+        if not traverse_obj(titles, (0, 'latestAvailableVersion')):
             raise ExtractorError('Episode not found', video_id=video_id, expected=True)
 
         return {
@@ -544,6 +544,9 @@ class ITVXIE(InfoExtractor):
                     titles(sortBy: SEQUENCE_DESC) {
                         legacyId
                         title
+                        latestAvailableVersion {
+                            duration
+                        }
                     }
                 }
             }
@@ -571,12 +574,15 @@ class ITVXIE(InfoExtractor):
                 'genres': ('brand', 'genres', ..., 'name'),
                 'thumbnail': ('imageUrl', {lambda i: i.format(
                     width=1920, height=1080, quality=100, blur=0, bg='false', image_format='jpg')}),
+                'entries': (
+                    'titles', lambda _, t: t['latestAvailableVersion'],
+                    {lambda title: self.url_result(
+                        f'https://www.itv.com/watch/{slug}/{brand_id}/{title["legacyId"].replace("/", "a")}',
+                        ie='ITVX', video_id=title['legacyId'].replace('/', 'a'),
+                        video_title=title['title'], url_transparent=True,
+                    )},
+                ),
             }),
-            'entries': [self.url_result(
-                f'https://www.itv.com/watch/{slug}/{brand_id}/{title["legacyId"].replace("/", "a")}',
-                ie='ITVX', video_id=title['legacyId'].replace('/', 'a'),
-                video_title=title['title'], url_transparent=True,
-            ) for title in brands[0]['titles']],
         }
 
     def _get_formats(self, episode, video_id, platform):
