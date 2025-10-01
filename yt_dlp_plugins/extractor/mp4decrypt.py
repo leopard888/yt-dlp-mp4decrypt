@@ -23,7 +23,7 @@ from yt_dlp.utils import (
     jwt_decode_hs256,
     parse_duration,
     parse_iso8601,
-    parse_qs,
+    require,
     traverse_obj,
     update_url_query,
     urlencode_postdata,
@@ -847,28 +847,26 @@ class MytvSuperIE(InfoExtractor):
         })
 
 
-class NHKPlusIE(InfoExtractor):
-    _VALID_URL = r'https://plus\.nhk\.jp/watch/st/(?P<id>[a-z0-9_]+)'
+class NHKOneIE(InfoExtractor):
+    _VALID_URL = r'https://www\.web\.nhk/tv/(?:[^/]+/)*ep/(?P<id>[A-Z0-9]+)'
 
     def _real_extract(self, url):
         content_id = self._match_id(url)
-        stream = self._download_json(
-            f'https://vod-npd2.cdn.plus.nhk.jp/npd2/r5/pl2/streams/4/{content_id}.json'
-            if re.match(r'^[0-9]{3}_', content_id)
-            else f'https://api-plus.nhk.jp/r5/pl2/streams/4/{content_id}', content_id,
-            query={'area_id': '130', 'is_rounded': 'false'})
-
-        program = stream['body'][0]['stream_type']['program']
-        data = self._download_json(program['hsk']['video_descriptor'], content_id)
+        info = self._download_json(
+            f'https://api.web.nhk/r8/l/bundle/te/{content_id}.json', content_id,
+            headers={'cookie': 'z_at=' + self._get_user_token()})
+        video_url = traverse_obj(info, (
+            'tvepisode', 'result', 0,
+            'video', 0, 'detailedVideoDescriptor', {require('VideoDescriptor')}))
+        data = self._download_json(video_url, content_id, headers={'referer': 'https://www.web.nhk/'})
 
         for playlist in data['manifests']:
             if playlist['drm_type'] == 'cenc':
-                fmts, subs = self._extract_m3u8_formats_and_subtitles(playlist['url'], content_id)
+                fmts, subs = self._extract_m3u8_formats_and_subtitles(playlist['url'], content_id, 'mp4')
                 self._remove_duplicate_formats(fmts)
 
                 for fmt in fmts:
                     if fmt.get('vcodec') == 'none':
-                        fmt.setdefault('ext', 'm4a')
                         fmt.setdefault('abr', int_or_none(self._search_regex(
                             r'/a[sm](\d+)/\w+\.m3u8$', fmt['url'], 'abr', default=None)))
 
@@ -877,14 +875,20 @@ class NHKPlusIE(InfoExtractor):
 
                 def license_callback(challenge):
                     return self._request_webpage(
-                        'https://drm.npd.plus.nhk.jp/widevine/license', content_id,
+                        'https://licence.hsk.st.nhk/widevine/license', content_id,
                         note='Fetching keys', data=challenge,
-                        headers={'authorization': 'Bearer ' + self._get_access_key()}).read()
+                        headers={'authorization': 'Bearer ' + self._get_user_token()}).read()
 
                 return {
-                    'id': content_id,
-                    'title': program['title'],
-                    'description': program['content'],
+                    **traverse_obj(info, ('tvepisode', 'result', 0, {
+                        'id': 'id',
+                        'title': 'name',
+                        'description': 'description',
+                        'series': ('partOfSeries', 'name'),
+                        'genres': ('identifierGroup', 'formatGenreTag', ..., 'name'),
+                        'thumbnail': ('eyecatch', 'main', 'url'),
+                        'timestamp': ('releasedEvent', 'startDate', {parse_iso8601}),
+                    })),
                     'formats': fmts,
                     'subtitles': subs,
                     '_license_callback': license_callback,
@@ -895,44 +899,22 @@ class NHKPlusIE(InfoExtractor):
                 jwt_decode_hs256(token)['exp'] >= time.time() + 300:
             return token
 
-        if not self._cookies_passed:
-            self.raise_login_required()
-
-        _, urlh = self._download_webpage_handle(
-            'https://agree.auth.nhkid.jp/oauth/AuthorizationEndpoint', None,
-            'Get user token',
+        self._download_webpage(
+            'https://www.web.nhk/tix/build_authorize', None, 'Get user token',
             query={
-                'scope': 'openid SIMUL001',
-                'response_type': 'id_token token',
-                'client_id': 'simul',
-                'redirect_uri': 'https://plus.nhk.jp/auth/login',
-                'claims': '{"id_token":{"service_level":{"essential":true}}}',
-                'nonce': uuid.uuid4(),
-                'did': uuid.uuid4(),
+                'idp': 'r-alaz',
+                'profileType': 'anonymous',
+                'redirect_uri': 'https://www.web.nhk/tv/g1',
+                'ctu': 'in',
+            },
+            headers={
+                'cookie': 'consentToUse={"status":"optedin","entity":"household"}',
             })
 
-        if (token := traverse_obj(parse_qs(urlh.url.replace('#', '?')), ('id_token', 0))):
-            self.cache.store(self.IE_NAME, 'token', token)
-            return token
+        token = self._get_cookies('https://www.web.nhk').get('z_at').value
+        self.cache.store(self.IE_NAME, 'token', token)
 
-        raise ExtractorError('Unable to get user token', expected=True)
-
-    def _get_access_key(self):
-        access_key = self.cache.load(self.IE_NAME, 'accesskey') or {}
-
-        if access_key.get('expire', 0) < time.time() + 300 and (token := self._get_user_token()):
-            access_key = self._download_json(
-                'https://ctl.npd.plus.nhk.jp/create-accesskey', None,
-                note='Create access key',
-                headers={
-                    'accept': 'application/json',
-                    'authorization': 'Bearer ' + token,
-                    'content-type': 'application/json',
-                }, data=b'{}')
-
-            self.cache.store(self.IE_NAME, 'accesskey', access_key)
-
-        return access_key.get('drmToken')
+        return token
 
 
 class SonyLIVIE(_SonyLIVIE, plugin_name='yt-dlp-mp4decrypt'):
